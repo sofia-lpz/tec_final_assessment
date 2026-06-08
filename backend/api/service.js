@@ -59,4 +59,3 @@ export const getOneUsuario = async (id) => {
         throw error;
     }
 }   
-//Usuarios end

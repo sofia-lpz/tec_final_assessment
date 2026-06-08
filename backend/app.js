@@ -3,7 +3,7 @@ import bodyParser from 'body-parser';
 import {router} from './api/routes.js'
 import 'dotenv/config'
 
-const requiredEnv = ['DB_HOST', 'DB_DATABASE', 'DB_USER', 'DB_PASSWORD'];
+const requiredEnv = ['DB_HOST', 'DB_DATABASE', 'DB_USER', 'DB_PASSWORD', 'JWT_SECRET'];
 const missing = requiredEnv.filter((key) => !process.env[key]);
 
 if (missing.length > 0) {
