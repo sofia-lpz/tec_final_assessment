@@ -15,7 +15,7 @@ export async function verifyPassword(username, password) {
     if (!user) {
         throw new Error('User not found');
     }
-    const isMatch = await bcrypt.compare(password, user.contraseña);
+    const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
         throw new Error('Invalid password');
     }
@@ -25,17 +25,17 @@ export async function verifyPassword(username, password) {
 export async function getUserByUsername(username) {
     const conn = await connectToDB();
     const [rows] = await conn.execute(
-        "SELECT * FROM usuarios WHERE username = ?",
+        "SELECT * FROM users WHERE username = ?",
         [username]
     );
     conn.end();
     return rows[0];
 }
 
-export async function getUsuarios(req) {
+export async function getUsers(req) {
     try {
         const connection = await connectToDB();
-        let query = "SELECT * FROM usuarios";
+        let query = "SELECT * FROM users";
         let params = [];
         let ids = [];
 
@@ -94,11 +94,11 @@ export async function updateUsuario(id, updateData) {
     const setClause = keys.map(key => `${key} = ?`).join(', ');
     
     values.push(id);
-    const query = `UPDATE usuarios SET ${setClause} WHERE id = ?`;
+    const query = `UPDATE users SET ${setClause} WHERE id = ?`;
     
     await conn.execute(query, values);
     
-    const [updatedRow] = await conn.execute("SELECT * FROM usuarios WHERE id = ?", [id]);
+    const [updatedRow] = await conn.execute("SELECT * FROM users WHERE id = ?", [id]);
     conn.end();
     return updatedRow[0];
     }
@@ -110,7 +110,7 @@ export async function updateUsuario(id, updateData) {
 export async function deleteUsuario(id) {
     const conn = await connectToDB();
     const [result] = await conn.execute(
-        "DELETE FROM usuarios WHERE id = ?",
+        "DELETE FROM users WHERE id = ?",
         [id]
     );
     conn.end();
@@ -120,7 +120,7 @@ export async function deleteUsuario(id) {
 export async function getOneUsuario(id) {
     const conn = await connectToDB();
     const [rows] = await conn.execute(
-        "SELECT * FROM usuarios WHERE id = ?",
+        "SELECT * FROM users WHERE id = ?",
         [id]
     );
     conn.end();
@@ -136,7 +136,7 @@ export async function createUsuario(username, password, role) {
     const conn = await connectToDB();
     try {
         const [result] = await conn.execute(
-            "INSERT INTO usuarios (username, contraseña, role) VALUES (?, ?, ?)",
+            "INSERT INTO users (username, password, role) VALUES (?, ?, ?)",
             [username, hashedPassword, role]
         );
         conn.end();
@@ -149,4 +149,4 @@ export async function createUsuario(username, password, role) {
         throw error;
     }
 }
-//Usuarios End
+//users End
