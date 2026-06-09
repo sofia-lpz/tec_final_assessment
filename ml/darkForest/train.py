@@ -279,147 +279,148 @@ class DarkForestStopper:
                     else f"extermination ({ann_rate:.0%})")
         return None
 
-def main():
-    args = parse_args()
-    args.reward_weights = {}
-    for kv in args.reward:
-        k, v = kv.split("=")
-        args.reward_weights[k.strip()] = float(v)
-    args.batch_size = args.num_envs * args.num_steps
-    run_name = args.run_name or f"darkforest_{args.critic}_{int(time.time())}"
+class PPOTrainer:
+    """Steppable PPO loop. Same math/order as the original monolithic main(),
+    just split so a rollout step can be driven (and visualized) one at a time."""
 
-    random_seed(args.seed, args.torch_deterministic)
-    print(f"[setup] run={run_name} critic={args.critic} "
-          f"stop-mode={args.stop_mode}")
+    def __init__(self, args):
+        self.args = args
+        random_seed(args.seed, args.torch_deterministic)
 
+        self.vec = MAVecEnv([make_env_fn(args, i) for i in range(args.num_envs)])
+        vec = self.vec
+        self.N, self.E = vec.N, vec.num_envs
+        self.batch = self.E * self.N
+        N, E, batch = self.N, self.E, self.batch
 
+        self.agent = Agent(vec.obs_dim, vec.action_dim, vec.state_dim, N,
+                           args.critic, args.hidden_dim)
+        self.optimizer = optim.Adam(self.agent.parameters(),
+                                    lr=args.learning_rate, eps=1e-5)
 
-    vec = MAVecEnv([make_env_fn(args, i) for i in range(args.num_envs)])
-    N, E = vec.N, vec.num_envs
-    batch = E * N                          # rows per timestep (env x agent)
-    agent = Agent(vec.obs_dim, vec.action_dim, vec.state_dim, N,
-                  args.critic, args.hidden_dim)
-    optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
+        self.onehot_all = torch.zeros(batch, N)
+        for i in range(E):
+            for a in range(N):
+                self.onehot_all[i * N + a, a] = 1.0
 
-    onehot_all = torch.zeros(batch, N)
-    for i in range(E):
-        for a in range(N):
-            onehot_all[i * N + a, a] = 1.0
+        T = self.T = args.num_steps
+        self.obs_b = torch.zeros((T, batch, vec.obs_dim))
+        self.mask_b = torch.zeros((T, batch, vec.action_dim))
+        self.state_b = torch.zeros((T, batch, vec.state_dim))
+        self.act_b = torch.zeros((T, batch), dtype=torch.long)
+        self.logp_b = torch.zeros((T, batch))
+        self.val_b = torch.zeros((T, batch))
+        self.rew_b = torch.zeros((T, batch))
+        self.done_b = torch.zeros((T, batch))
+        self.active_b = torch.zeros((T, batch))
 
-    T = args.num_steps
-    obs_b = torch.zeros((T, batch, vec.obs_dim))
-    mask_b = torch.zeros((T, batch, vec.action_dim))
-    state_b = torch.zeros((T, batch, vec.state_dim))
-    act_b = torch.zeros((T, batch), dtype=torch.long)
-    logp_b = torch.zeros((T, batch))
-    val_b = torch.zeros((T, batch))
-    rew_b = torch.zeros((T, batch))
-    done_b = torch.zeros((T, batch))
-    active_b = torch.zeros((T, batch))
+        obs_np, mask_np, state_np, active_np = vec.reset(seed=args.seed)
+        self.active_np = active_np
+        self.next_obs = torch.tensor(self._to_rows(obs_np))
+        self.next_mask = torch.tensor(self._to_rows(mask_np))
+        self.next_state = torch.tensor(np.repeat(state_np, N, axis=0))
+        self.next_done = torch.zeros(batch)
+        self.next_active = torch.tensor(active_np.reshape(batch))
 
-    def to_rows(arr):  # (E, N, ...) -> (E*N, ...)
-        return arr.reshape(batch, *arr.shape[2:])
+        self.stopper = DarkForestStopper(args)
+        self.ep_return = np.zeros(batch, dtype=np.float64)
+        self.return_hist = deque(maxlen=100)
+        self.surv_hist = deque(maxlen=100)
+        self.global_step = 0
+        self.num_iters = args.total_timesteps // args.batch_size
+        self.start = time.time()
+        self.stop_reason = None
+        self.it = 0
+        self._n_broadcast = self._n_active = 0.0
+        self._ep_infos = []
 
-    obs_np, mask_np, state_np, active_np = vec.reset(seed=args.seed)
-    next_obs = torch.tensor(to_rows(obs_np))
-    next_mask = torch.tensor(to_rows(mask_np))
-    next_state = torch.tensor(np.repeat(state_np, N, axis=0))
-    next_done = torch.zeros(batch)
-    next_active = torch.tensor(active_np.reshape(batch))
+    def _to_rows(self, arr):  # (E, N, ...) -> (E*N, ...)
+        return arr.reshape(self.batch, *arr.shape[2:])
 
-    stopper = DarkForestStopper(args)
-    ep_return = np.zeros(batch, dtype=np.float64)
-    return_hist = deque(maxlen=100)
-    surv_hist = deque(maxlen=100)
-    global_step = 0
-    num_iters = args.total_timesteps // args.batch_size
-    start = time.time()
-    stop_reason = None
+    def rollout_step(self, step):
+        """One env step; fills buffers[step]. Returns the per-env infos."""
+        self.global_step += self.E
+        self.obs_b[step] = self.next_obs
+        self.mask_b[step] = self.next_mask
+        self.state_b[step] = self.next_state
+        self.done_b[step] = self.next_done
+        self.active_b[step] = self.next_active
 
-    for it in range(1, num_iters + 1):
-        if args.anneal_lr:
-            optimizer.param_groups[0]["lr"] = (1 - (it - 1) / num_iters) * args.learning_rate
-
-        n_broadcast = 0.0
-        n_active = 0.0
-        ep_infos = []
-
-        for step in range(T):
-            global_step += E
-            obs_b[step] = next_obs
-            mask_b[step] = next_mask
-            state_b[step] = next_state
-            done_b[step] = next_done
-            active_b[step] = next_active
-
-            with torch.no_grad():
-                action, logp, _, value = agent.get_action_and_value(
-                    next_obs, next_mask, next_state, onehot_all)
-            val_b[step] = value
-            act_b[step] = action
-            logp_b[step] = logp
-
-            act_np = action.cpu().numpy().reshape(E, N)
-            n_broadcast += float(((act_np == A_BROADCAST) & (active_np > 0)).sum())
-            n_active += float(active_np.sum())
-
-            obs_np, mask_np, state_np, rew_np, done_np, active_np, infos = vec.step(act_np)
-            rew_b[step] = torch.tensor(rew_np.reshape(batch))
-
-            ep_return += rew_np.reshape(batch)
-            done_flat = done_np.reshape(batch)
-            for r in range(batch):
-                if done_flat[r] > 0:
-                    return_hist.append(ep_return[r])
-                    ep_return[r] = 0.0
-            for info in infos:
-                if info.get("episode_end"):
-                    surv_hist.append(info["survivors"])
-                    ep_infos.append(info)
-
-            next_obs = torch.tensor(to_rows(obs_np))
-            next_mask = torch.tensor(to_rows(mask_np))
-            next_state = torch.tensor(np.repeat(state_np, N, axis=0))
-            next_done = torch.tensor(done_flat, dtype=torch.float32)
-            next_active = torch.tensor(active_np.reshape(batch))
-        # gae
         with torch.no_grad():
-            next_value = agent.get_value(next_obs, next_state, onehot_all).squeeze(-1)
-            adv = torch.zeros_like(rew_b)
+            action, logp, _, value = self.agent.get_action_and_value(
+                self.next_obs, self.next_mask, self.next_state, self.onehot_all)
+        self.val_b[step] = value
+        self.act_b[step] = action
+        self.logp_b[step] = logp
+
+        act_np = action.cpu().numpy().reshape(self.E, self.N)
+        self._n_broadcast += float(((act_np == A_BROADCAST) & (self.active_np > 0)).sum())
+        self._n_active += float(self.active_np.sum())
+
+        obs_np, mask_np, state_np, rew_np, done_np, active_np, infos = self.vec.step(act_np)
+        self.active_np = active_np
+        self.rew_b[step] = torch.tensor(rew_np.reshape(self.batch))
+
+        self.ep_return += rew_np.reshape(self.batch)
+        done_flat = done_np.reshape(self.batch)
+        for r in range(self.batch):
+            if done_flat[r] > 0:
+                self.return_hist.append(self.ep_return[r])
+                self.ep_return[r] = 0.0
+        for info in infos:
+            if info.get("episode_end"):
+                self.surv_hist.append(info["survivors"])
+                self._ep_infos.append(info)
+
+        self.next_obs = torch.tensor(self._to_rows(obs_np))
+        self.next_mask = torch.tensor(self._to_rows(mask_np))
+        self.next_state = torch.tensor(np.repeat(state_np, self.N, axis=0))
+        self.next_done = torch.tensor(done_flat, dtype=torch.float32)
+        self.next_active = torch.tensor(active_np.reshape(self.batch))
+        return infos
+
+    def _optimize(self):
+        """GAE + PPO update over the collected rollout.
+        Returns the last v_loss, or None if there were no live rows."""
+        args, T, batch = self.args, self.T, self.batch
+        with torch.no_grad():
+            next_value = self.agent.get_value(self.next_obs, self.next_state, self.onehot_all).squeeze(-1)
+            adv = torch.zeros_like(self.rew_b)
             lastgae = torch.zeros(batch)
             for t in reversed(range(T)):
                 if t == T - 1:
-                    nonterminal = 1.0 - next_done
+                    nonterminal = 1.0 - self.next_done
                     nextval = next_value
                 else:
-                    nonterminal = 1.0 - done_b[t + 1]
-                    nextval = val_b[t + 1]
-                delta = rew_b[t] + args.gamma * nextval * nonterminal - val_b[t]
+                    nonterminal = 1.0 - self.done_b[t + 1]
+                    nextval = self.val_b[t + 1]
+                delta = self.rew_b[t] + args.gamma * nextval * nonterminal - self.val_b[t]
                 adv[t] = lastgae = delta + args.gamma * args.gae_lambda * nonterminal * lastgae
-            returns = adv + val_b
+            returns = adv + self.val_b
 
-        b_obs = obs_b.reshape(-1, vec.obs_dim)
-        b_mask = mask_b.reshape(-1, vec.action_dim)
-        b_state = state_b.reshape(-1, vec.state_dim)
-        b_onehot = onehot_all.repeat(T, 1)
-        b_act = act_b.reshape(-1)
-        b_logp = logp_b.reshape(-1)
-        b_val = val_b.reshape(-1)
+        b_obs = self.obs_b.reshape(-1, self.vec.obs_dim)
+        b_mask = self.mask_b.reshape(-1, self.vec.action_dim)
+        b_state = self.state_b.reshape(-1, self.vec.state_dim)
+        b_onehot = self.onehot_all.repeat(T, 1)
+        b_act = self.act_b.reshape(-1)
+        b_logp = self.logp_b.reshape(-1)
+        b_val = self.val_b.reshape(-1)
         b_adv = adv.reshape(-1)
         b_ret = returns.reshape(-1)
-        b_active = active_b.reshape(-1)
+        b_active = self.active_b.reshape(-1)
 
         live_idx = torch.nonzero(b_active > 0, as_tuple=False).squeeze(-1)
         if live_idx.numel() == 0:
-            continue
+            return None
         mb_size = max(1, live_idx.numel() // args.num_minibatches)
 
         approx_kl = torch.tensor(0.0)
+        v_loss = torch.tensor(0.0)
         for _ in range(args.update_epochs):
             perm = live_idx[torch.randperm(live_idx.numel())]
             for s in range(0, perm.numel(), mb_size):
                 mb = perm[s:s + mb_size]
-                _, newlogp, entropy, newval = agent.get_action_and_value(
+                _, newlogp, entropy, newval = self.agent.get_action_and_value(
                     b_obs[mb], b_mask[mb], b_state[mb], b_onehot[mb], b_act[mb])
                 logratio = newlogp - b_logp[mb]
                 ratio = logratio.exp()
@@ -446,37 +447,82 @@ def main():
                 ent_loss = entropy.mean()
                 loss = pg_loss - args.ent_coef * ent_loss + args.vf_coef * v_loss
 
-                optimizer.zero_grad()
+                self.optimizer.zero_grad()
                 loss.backward()
-                nn.utils.clip_grad_norm_(agent.parameters(), args.max_grad_norm)
-                optimizer.step()
+                nn.utils.clip_grad_norm_(self.agent.parameters(), args.max_grad_norm)
+                self.optimizer.step()
 
             if args.target_kl is not None and approx_kl > args.target_kl:
                 break
+        return v_loss
 
-        broadcast_rate = (n_broadcast / n_active) if n_active > 0 else 0.0
-        mean_ret = float(np.mean(return_hist)) if return_hist else float("nan")
-        mean_surv = float(np.mean(surv_hist)) if surv_hist else float("nan")
-        sps = int(global_step / (time.time() - start))
+    def train_iteration(self):
+        """One full PPO iteration (T rollout steps + one update).
+        Returns a metrics dict, or None if the update was skipped."""
+        args = self.args
+        self.it += 1
+        if args.anneal_lr:
+            self.optimizer.param_groups[0]["lr"] = (1 - (self.it - 1) / self.num_iters) * args.learning_rate
 
-        if it % 5 == 0 or it == 1:
-            print(f"[iter {it:4d}/{num_iters}] step={global_step} "
-                  f"broadcast_rate={broadcast_rate:.4f} ema={stopper.ema or 0:.4f} "
+        self._n_broadcast = 0.0
+        self._n_active = 0.0
+        self._ep_infos = []
+
+        for step in range(self.T):
+            self.rollout_step(step)
+
+        v_loss = self._optimize()
+        if v_loss is None:            # no live rows -> matches original `continue`
+            return None
+
+        broadcast_rate = (self._n_broadcast / self._n_active) if self._n_active > 0 else 0.0
+        mean_ret = float(np.mean(self.return_hist)) if self.return_hist else float("nan")
+        mean_surv = float(np.mean(self.surv_hist)) if self.surv_hist else float("nan")
+        sps = int(self.global_step / (time.time() - self.start))
+
+        if self.it % 5 == 0 or self.it == 1:
+            print(f"[iter {self.it:4d}/{self.num_iters}] step={self.global_step} "
+                  f"broadcast_rate={broadcast_rate:.4f} ema={self.stopper.ema or 0:.4f} "
                   f"ep_ret={mean_ret:.2f} survivors={mean_surv:.2f} "
                   f"value_loss={float(v_loss):.3f} SPS={sps}")
 
-        stop_reason = stopper.update(it, broadcast_rate, ep_infos)
-        if stop_reason:
-            print(f"\n[STOP @ iter {it}] dark-forest criterion met: {stop_reason}")
-            break
+        self.stop_reason = self.stopper.update(self.it, broadcast_rate, self._ep_infos)
+        if self.stop_reason:
+            print(f"\n[STOP @ iter {self.it}] dark-forest criterion met: {self.stop_reason}")
+        return {"broadcast_rate": broadcast_rate, "mean_ret": mean_ret,
+                "mean_surv": mean_surv, "v_loss": float(v_loss),
+                "stop_reason": self.stop_reason}
 
-    os.makedirs("runs", exist_ok=True)
-    ckpt = f"runs/{run_name}.pt"
-    torch.save({"agent": agent.state_dict(), "args": vars(args),
-                "stopped": stop_reason, "global_step": global_step}, ckpt)
-    print(f"[done] saved {ckpt} after {global_step} steps "
-          f"({'stopped: ' + stop_reason if stop_reason else 'reached total-timesteps'})")
-    vec_close(vec)
+    def run(self, run_name):
+        """Full training run + checkpoint (reproduces the original main())."""
+        for _ in range(self.num_iters):
+            self.train_iteration()
+            if self.stop_reason:
+                break
+
+        os.makedirs("runs", exist_ok=True)
+        ckpt = f"runs/{run_name}.pt"
+        torch.save({"agent": self.agent.state_dict(), "args": vars(self.args),
+                    "stopped": self.stop_reason, "global_step": self.global_step}, ckpt)
+        print(f"[done] saved {ckpt} after {self.global_step} steps "
+              f"({'stopped: ' + self.stop_reason if self.stop_reason else 'reached total-timesteps'})")
+        vec_close(self.vec)
+
+
+def main():
+    args = parse_args()
+    args.reward_weights = {}
+    for kv in args.reward:
+        k, v = kv.split("=")
+        args.reward_weights[k.strip()] = float(v)
+    args.batch_size = args.num_envs * args.num_steps
+    run_name = args.run_name or f"darkforest_{args.critic}_{int(time.time())}"
+
+    print(f"[setup] run={run_name} critic={args.critic} "
+          f"stop-mode={args.stop_mode}")
+
+    trainer = PPOTrainer(args)
+    trainer.run(run_name)
 
 
 def vec_close(vec):
