@@ -11,8 +11,8 @@ const STAR_SCALE = 4;
 const CELL_SIZE = STAR_SCALE * 3;
 
 // Grid dimensions — total cells in each axis
-const GRID_X = 7; // columns  (odd = star sits in a real center cell)
-const GRID_Z = 7; // rows
+const GRID_X = 10; // columns  (odd = star sits in a real center cell)
+const GRID_Z = 10; // rows
 // Y is always 0 — all planets on the same plane like a solar system
 
 // ── Planet definitions ───────────────────────────────────────
@@ -61,7 +61,7 @@ function GridCells() {
         return (
           <mesh key={i} position={[wx, wy, wz]}>
             <boxGeometry args={[CELL_SIZE, CELL_SIZE, CELL_SIZE]} />
-            <meshBasicMaterial transparent opacity={0} />
+            <meshBasicMaterial transparent opacity={0} depthWrite={false}/>
             <Edges color="#1a2a3a" threshold={1} />
           </mesh>
         );
