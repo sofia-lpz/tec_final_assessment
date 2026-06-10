@@ -89,7 +89,7 @@ function GridCells() {
 
 export default function SolarSystem() {
   return (
-    <div className="h-screen w-full bg-black">
+    <div className="h-full w-full bg-black border border-white/90 rounded-xl shadow-2xl">
       <Canvas camera={{ position: [0, CELL_SIZE * 3, CELL_SIZE * 4], fov: 50, near: 0.1, far: 2000 }}>
         <Environment preset="night" />
         <ambientLight intensity={0.2} />
