@@ -39,25 +39,12 @@ export default function SolarSystem() {
         <Stars radius={300} depth={60} count={5000} factor={7} fade />
 
         <Suspense fallback={null}>
-          {/* Star at the center of the grid — casts light on the planets */}
-          <Star name="star" scale={4} />
-
-          {/* Each planet on its own orbit: increasing radius, decreasing speed */}
-          <Orbit radius={10} speed={0.45}>
-            <Planet name="neptune" scale={2} state="none" glowColor="#037028" glowSize={0.7} />
-          </Orbit>
-
-          <Orbit radius={16} speed={0.35}>
-            <Planet name="neptune" scale={2} state="transmitting" />
-          </Orbit>
-
-          <Orbit radius={22} speed={0.27}>
-            <Planet name="neptune" scale={2} state="birthplus" glowColor="#037028" glowSize={0.7} />
-          </Orbit>
-
-          <Orbit radius={28} speed={0.2}>
-            <Planet name="neptune" scale={2} state="scienceplus" glowColor="#037028" glowSize={0.7} />
-          </Orbit>
+          <mesh position={[0, 0, 0]}>
+            <sphereGeometry args={[2, 32, 32]} />
+            <meshStandardMaterial emissive="#ffffe0" emissiveIntensity={1} />
+          </mesh>
+          {/* Once you drop an image in public/textures/, use it like this: */}
+          {/* <Planet position={[10, 0, 0]} radius={1.5} texture="/textures/earth.jpg" state="active" /> */}
         </Suspense>
 
         <OrbitControls
