@@ -21,6 +21,7 @@ import {
   SRGBColorSpace,
   TextureLoader,
   Vector2,
+  Vector3,
 } from "three";
 
 export type PlanetState = "none" | "transmitting" | "birthplus" | "scienceplus";
@@ -47,8 +48,9 @@ type PlanetProps = {
   glowSize?: number; // halo size relative to the planet (1 = same size)
   heartColor?: string; // birthplus heart colour
   heartCount?: number; // birthplus number of hearts
-  beakerColor?: string; // scienceplus beaker colour
+  beakerColor?: string; // scienceplus glass colour
   beakerCount?: number; // scienceplus number of beakers
+  beakerLiquidColor?: string; // scienceplus liquid (inside) colour
 };
 
 // ── Glow halo + coloured light ───────────────────────────────
@@ -200,20 +202,46 @@ const HEART_GEOMETRY = (() => {
   return geo;
 })();
 
-// Erlenmeyer-style flask: a profile (radius, height) revolved around Y.
-const BEAKER_GEOMETRY = (() => {
-  const profile = [
-    new Vector2(0.0, 0.0), // bottom centre (closes the base)
-    new Vector2(0.55, 0.0), // base edge
-    new Vector2(0.55, 0.06), // base wall
-    new Vector2(0.12, 0.85), // cone narrows up to the neck
-    new Vector2(0.12, 1.05), // straight neck
-    new Vector2(0.18, 1.12), // flared lip
+// Erlenmeyer-style flask: glass shell + a liquid volume that fills the lower
+// cone. Both are revolved around Y from a (radius, height) profile and share
+// the SAME centring/scale so the liquid nests perfectly inside the glass.
+const BEAKER = (() => {
+  // Outer glass wall profile (bottom centre → base → cone → neck → lip).
+  const glassProfile = [
+    new Vector2(0.0, 0.0),
+    new Vector2(0.55, 0.0),
+    new Vector2(0.55, 0.06),
+    new Vector2(0.12, 0.85),
+    new Vector2(0.12, 1.05),
+    new Vector2(0.18, 1.12),
   ];
-  const geo = new LatheGeometry(profile, 24);
-  geo.center();
-  geo.scale(1.3, 1.3, 1.3); // normalise to ~1 unit
-  return geo;
+  // Liquid sits just inside the glass and fills up to ~y=0.5, with a flat
+  // surface (radius → 0 at the top closes the cap).
+  const liquidProfile = [
+    new Vector2(0.0, 0.0),
+    new Vector2(0.50, 0.0),
+    new Vector2(0.50, 0.06),
+    new Vector2(0.30, 0.50),
+    new Vector2(0.0, 0.50),
+  ];
+
+  const glass = new LatheGeometry(glassProfile, 24);
+  const liquid = new LatheGeometry(liquidProfile, 24);
+
+  // Centre BOTH by the glass's bounding box so they stay aligned (a lathe is
+  // symmetric around Y, so only the Y offset matters).
+  glass.computeBoundingBox();
+  const c = new Vector3();
+  glass.boundingBox!.getCenter(c);
+
+  glass.translate(-c.x, -c.y, -c.z);
+  liquid.translate(-c.x, -c.y, -c.z);
+
+  const s = 1.3; // normalise to ~1 unit
+  glass.scale(s, s, s);
+  liquid.scale(s, s, s);
+
+  return { glass, liquid };
 })();
 
 // ── Generic swarm: spawns `count` items around the planet ────
@@ -223,15 +251,21 @@ function Swarm({
   color,
   count,
   geometry,
+  glass = false,
+  liquidGeometry,
+  liquidColor,
 }: {
   center: [number, number, number];
   radius: number;
   color: string;
   count: number;
   geometry: BufferGeometry;
+  glass?: boolean; // render outer mesh as translucent glass
+  liquidGeometry?: BufferGeometry; // optional inner volume (e.g. liquid)
+  liquidColor?: string;
 }) {
   const groupRef = useRef<Group>(null);
-  const refs = useRef<(Mesh | null)[]>([]);
+  const refs = useRef<(Group | null)[]>([]);
 
   // Spread items around a sphere with a golden-angle spiral (even coverage).
   const items = useMemo(() => {
@@ -256,16 +290,16 @@ function Swarm({
   useFrame(({ clock }) => {
     const t = clock.elapsedTime;
     for (let i = 0; i < items.length; i++) {
-      const m = refs.current[i];
+      const g = refs.current[i];
       const it = items[i];
-      if (!m || !it) continue;
+      if (!g || !it) continue;
       const bob = Math.sin(t * 1.5 + it.phase) * radius * 0.15;
-      m.position.set(
+      g.position.set(
         it.base[0] + it.dir[0] * bob,
         it.base[1] + it.dir[1] * bob,
         it.base[2] + it.dir[2] * bob
       );
-      m.rotation.y = t * it.spin;
+      g.rotation.y = t * it.spin;
     }
     if (groupRef.current) groupRef.current.rotation.y = t * 0.2;
   });
@@ -273,23 +307,46 @@ function Swarm({
   return (
     <group ref={groupRef} position={center}>
       {items.map((it, i) => (
-        <mesh
+        <group
           key={i}
           ref={(el) => {
             refs.current[i] = el;
           }}
-          geometry={geometry}
           position={it.base}
           scale={it.size}
         >
-          <meshStandardMaterial
-            color={color}
-            emissive={color}
-            emissiveIntensity={0.6}
-            roughness={0.4}
-            side={DoubleSide}
-          />
-        </mesh>
+          <mesh geometry={geometry}>
+            {glass ? (
+              <meshStandardMaterial
+                color={color}
+                transparent
+                opacity={0.4}
+                roughness={0.05}
+                metalness={0}
+                side={DoubleSide}
+              />
+            ) : (
+              <meshStandardMaterial
+                color={color}
+                emissive={color}
+                emissiveIntensity={0.6}
+                roughness={0.4}
+                side={DoubleSide}
+              />
+            )}
+          </mesh>
+
+          {liquidGeometry && (
+            <mesh geometry={liquidGeometry}>
+              <meshStandardMaterial
+                color={liquidColor ?? color}
+                emissive={liquidColor ?? color}
+                emissiveIntensity={0.75}
+                roughness={0.3}
+              />
+            </mesh>
+          )}
+        </group>
       ))}
     </group>
   );
@@ -331,6 +388,7 @@ export default function Planet({
   heartCount = 5,
   beakerColor = "#c3d6c9",
   beakerCount = 5,
+  beakerLiquidColor = "#39e0c8",
 }: PlanetProps) {
   const groupRef = useRef<Group>(null);
 
@@ -394,7 +452,10 @@ export default function Planet({
           radius={bounds.radius}
           color={beakerColor}
           count={beakerCount}
-          geometry={BEAKER_GEOMETRY}
+          geometry={BEAKER.glass}
+          glass
+          liquidGeometry={BEAKER.liquid}
+          liquidColor={beakerLiquidColor}
         />
       )}
     </group>

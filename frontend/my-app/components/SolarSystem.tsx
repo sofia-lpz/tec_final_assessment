@@ -7,20 +7,34 @@ import Star from "@/components/Star";
 import type { PlanetState } from "@/components/Planet";
 
 // ── Grid config ──────────────────────────────────────────────
-const STAR_SCALE = 4;
+const STAR_SCALE = 10;
 const CELL_SIZE = STAR_SCALE * 3;
 
-// Grid dimensions — total cells in each axis
-const GRID_X = 10; // columns  (odd = star sits in a real center cell)
-const GRID_Z = 10; // rows
-// Y is always 0 — all planets on the same plane like a solar system
+// Grid dimensions — controls how many cells fan out from the centre.
+const GRID_X = 10; // → HALF_X cells each side of centre
+const GRID_Z = 10;
+
+// Half-extents and total cell counts. An odd total keeps a real centre cell
+// (where the star lives).
+const HALF_X = Math.floor(GRID_X / 2); // 5
+const HALF_Z = Math.floor(GRID_Z / 2); // 5
+const COLS = HALF_X * 2 + 1; // 11 columns, indexed 0…10
+const ROWS = HALF_Z * 2 + 1; // 11 rows,    indexed 0…10
+
+// Index of the centre cell (the star) in the new top-left system.
+const CENTER_COL = HALF_X; // 5
+const CENTER_ROW = HALF_Z; // 5
+
+// ── Coordinate system ────────────────────────────────────────
+// Screen-style grid: [0,0] is the TOP-LEFT cell.
+//   col (x): 0 → left,  increases to the RIGHT
+//   row (y): 0 → top,   increases DOWNWARD (toward the camera / bottom of view)
+// The star sits at [CENTER_COL, CENTER_ROW] = [5, 5].
 
 // ── Planet definitions ───────────────────────────────────────
-// grid coords are integers; [0,0] = star cell center
-// only X and Z — no Y offset
 type PlanetDef = {
   name: string;
-  grid: [number, number]; // [col, row] — center is [0,0]
+  grid: [number, number]; // [col, row] — [0,0] = top-left, star = [5,5]
   scale?: number;
   state?: PlanetState;
   glowColor?: string;
@@ -28,26 +42,29 @@ type PlanetDef = {
 };
 
 const PLANETS: PlanetDef[] = [
-  { name: "neptune", grid: [-3, 0], scale: 2, state: "none",        glowColor: "#037028", glowSize: 0.7 },
-  { name: "neptune", grid: [-2, 0], scale: 2, state: "transmitting" },
-  { name: "neptune", grid: [-1, 0], scale: 2, state: "birthplus",   glowColor: "#037028", glowSize: 0.7 },
-  { name: "neptune", grid: [ 1, 0], scale: 2, state: "scienceplus", glowColor: "#037028", glowSize: 0.7 },
-  { name: "neptune", grid: [ 2, 0], scale: 2, state: "none" },
-  { name: "neptune", grid: [ 3, 0], scale: 2, state: "transmitting" },
+  { name: "neptune", grid: [2, 5], scale: 2, state: "none",        glowColor: "#037028", glowSize: 0.7 },
+  { name: "neptune", grid: [3, 5], scale: 2, state: "transmitting" },
+  { name: "neptune", grid: [4, 5], scale: 2, state: "birthplus",   glowColor: "#037028", glowSize: 0.7 },
+  { name: "neptune", grid: [6, 5], scale: 2, state: "scienceplus", glowColor: "#037028", glowSize: 0.7 },
+  { name: "neptune", grid: [7, 5], scale: 2, state: "none" },
+  { name: "neptune", grid: [8, 5], scale: 2, state: "transmitting" },
+  { name: "neptune", grid: [0, 0], scale: 2, state: "transmitting" },
 ];
 
-function gridToWorld(gx: number, gz: number): [number, number, number] {
-  return [gx * CELL_SIZE, 0, gz * CELL_SIZE];
+// Top-left grid coords → centred world coords.
+// col grows +X (right); row grows +Z (down on screen). Y stays 0.
+function gridToWorld(col: number, row: number): [number, number, number] {
+  const x = (col - CENTER_COL) * CELL_SIZE;
+  const z = (row - CENTER_ROW) * CELL_SIZE;
+  return [x, 0, z];
 }
 
-// All cells in the fixed grid
+// Every cell in the grid, addressed from the top-left.
 function allCells(): [number, number][] {
   const cells: [number, number][] = [];
-  const halfX = Math.floor(GRID_X / 2);
-  const halfZ = Math.floor(GRID_Z / 2);
-  for (let x = -halfX; x <= halfX; x++) {
-    for (let z = -halfZ; z <= halfZ; z++) {
-      cells.push([x, z]);
+  for (let row = 0; row < ROWS; row++) {
+    for (let col = 0; col < COLS; col++) {
+      cells.push([col, row]);
     }
   }
   return cells;
@@ -56,12 +73,12 @@ function allCells(): [number, number][] {
 function GridCells() {
   return (
     <>
-      {allCells().map(([gx, gz], i) => {
-        const [wx, wy, wz] = gridToWorld(gx, gz);
+      {allCells().map(([col, row], i) => {
+        const [wx, wy, wz] = gridToWorld(col, row);
         return (
-          <mesh key={i} position={[wx, wy, wz]}>
+          <mesh key={i} position={[wx, wy, wz]} renderOrder={-1}>
             <boxGeometry args={[CELL_SIZE, CELL_SIZE, CELL_SIZE]} />
-            <meshBasicMaterial transparent opacity={0} depthWrite={false}/>
+            <meshBasicMaterial transparent opacity={0} depthWrite={false} />
             <Edges color="#1a2a3a" threshold={1} />
           </mesh>
         );
