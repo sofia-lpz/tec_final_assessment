@@ -1,75 +1,108 @@
 "use client";
-
-import { Suspense, useRef } from "react";
-import type { ReactNode } from "react";
-import { Canvas, useFrame } from "@react-three/fiber";
-import { OrbitControls, Stars, Environment } from "@react-three/drei";
-import { Group } from "three";
+import { Suspense } from "react";
+import { Canvas } from "@react-three/fiber";
+import { OrbitControls, Stars, Environment, Edges } from "@react-three/drei";
 import Planet from "@/components/Planet";
 import Star from "@/components/Star";
+import type { PlanetState } from "@/components/Planet";
 
-// Revolves its children around the center (the star) at a given radius/speed.
-function Orbit({
-  radius,
-  speed,
-  children,
-}: {
-  radius: number;
-  speed: number;
-  children: ReactNode;
-}) {
-  const ref = useRef<Group>(null);
-  useFrame((_, delta) => {
-    if (ref.current) ref.current.rotation.y += speed * delta;
-  });
+// ── Grid config ──────────────────────────────────────────────
+const STAR_SCALE = 4;
+const CELL_SIZE = STAR_SCALE * 3;
+
+// Grid dimensions — total cells in each axis
+const GRID_X = 7; // columns  (odd = star sits in a real center cell)
+const GRID_Z = 7; // rows
+// Y is always 0 — all planets on the same plane like a solar system
+
+// ── Planet definitions ───────────────────────────────────────
+// grid coords are integers; [0,0] = star cell center
+// only X and Z — no Y offset
+type PlanetDef = {
+  name: string;
+  grid: [number, number]; // [col, row] — center is [0,0]
+  scale?: number;
+  state?: PlanetState;
+  glowColor?: string;
+  glowSize?: number;
+};
+
+const PLANETS: PlanetDef[] = [
+  { name: "neptune", grid: [-3, 0], scale: 2, state: "none",        glowColor: "#037028", glowSize: 0.7 },
+  { name: "neptune", grid: [-2, 0], scale: 2, state: "transmitting" },
+  { name: "neptune", grid: [-1, 0], scale: 2, state: "birthplus",   glowColor: "#037028", glowSize: 0.7 },
+  { name: "neptune", grid: [ 1, 0], scale: 2, state: "scienceplus", glowColor: "#037028", glowSize: 0.7 },
+  { name: "neptune", grid: [ 2, 0], scale: 2, state: "none" },
+  { name: "neptune", grid: [ 3, 0], scale: 2, state: "transmitting" },
+];
+
+function gridToWorld(gx: number, gz: number): [number, number, number] {
+  return [gx * CELL_SIZE, 0, gz * CELL_SIZE];
+}
+
+// All cells in the fixed grid
+function allCells(): [number, number][] {
+  const cells: [number, number][] = [];
+  const halfX = Math.floor(GRID_X / 2);
+  const halfZ = Math.floor(GRID_Z / 2);
+  for (let x = -halfX; x <= halfX; x++) {
+    for (let z = -halfZ; z <= halfZ; z++) {
+      cells.push([x, z]);
+    }
+  }
+  return cells;
+}
+
+function GridCells() {
   return (
-    <group ref={ref}>
-      <group position={[radius, 0, 0]}>{children}</group>
-    </group>
+    <>
+      {allCells().map(([gx, gz], i) => {
+        const [wx, wy, wz] = gridToWorld(gx, gz);
+        return (
+          <mesh key={i} position={[wx, wy, wz]}>
+            <boxGeometry args={[CELL_SIZE, CELL_SIZE, CELL_SIZE]} />
+            <meshBasicMaterial transparent opacity={0} />
+            <Edges color="#1a2a3a" threshold={1} />
+          </mesh>
+        );
+      })}
+    </>
   );
 }
 
 export default function SolarSystem() {
   return (
     <div className="h-screen w-full bg-black">
-      {/* High on Y, slight Z offset → steep top-down view of the orbital plane */}
-      <Canvas camera={{ position: [0, 60, 18], fov: 50, near: 0.1, far: 2000 }}>
+      <Canvas camera={{ position: [0, CELL_SIZE * 3, CELL_SIZE * 4], fov: 50, near: 0.1, far: 2000 }}>
         <Environment preset="night" />
-        <ambientLight intensity={0} />
+        <ambientLight intensity={0.2} />
         <Stars radius={300} depth={60} count={5000} factor={7} fade />
 
         <Suspense fallback={null}>
-          {/* Star at the center of the grid — casts light on the planets */}
-          <Star name="star" scale={4} />
+          <Star name="star" scale={STAR_SCALE} />
 
-          {/* Each planet on its own orbit: increasing radius, decreasing speed */}
-          <Orbit radius={10} speed={0.45}>
-            <Planet name="neptune" scale={2} state="none" glowColor="#037028" glowSize={0.7} />
-          </Orbit>
-
-          <Orbit radius={16} speed={0.35}>
-            <Planet name="neptune" scale={2} state="transmitting" />
-          </Orbit>
-
-          <Orbit radius={22} speed={0.27}>
-            <Planet name="neptune" scale={2} state="birthplus" glowColor="#037028" glowSize={0.7} />
-          </Orbit>
-
-          <Orbit radius={28} speed={0.2}>
-            <Planet name="neptune" scale={2} state="scienceplus" glowColor="#037028" glowSize={0.7} />
-          </Orbit>
+          {PLANETS.map((p, i) => (
+            <Planet
+              key={i}
+              name={p.name}
+              scale={p.scale}
+              position={gridToWorld(p.grid[0], p.grid[1])}
+              state={p.state}
+              glowColor={p.glowColor}
+              glowSize={p.glowSize}
+              rotationSpeed={0.2}
+            />
+          ))}
         </Suspense>
+
+        <GridCells />
 
         <OrbitControls
           makeDefault
           target={[0, 0, 0]}
           enableDamping
           dampingFactor={0.05}
-          maxPolarAngle={Math.PI / 3}
         />
-
-        {/* The grid the star sits at the center of */}
-        <gridHelper args={[100, 50]} />
       </Canvas>
     </div>
   );
