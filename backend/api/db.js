@@ -25,7 +25,7 @@ export async function verifyPassword(username, password) {
 export async function getUserByUsername(username) {
     const conn = await connectToDB();
     const [rows] = await conn.execute(
-        "SELECT * FROM users WHERE username = ?",
+        "SELECT id, username, role FROM users WHERE username = ?",
         [username]
     );
     conn.end();
@@ -35,7 +35,7 @@ export async function getUserByUsername(username) {
 export async function getUsers(req) {
     try {
         const connection = await connectToDB();
-        let query = "SELECT * FROM users";
+        let query = "SELECT id, username, role FROM users";
         let params = [];
         let ids = [];
 
@@ -85,7 +85,7 @@ export async function getUsers(req) {
     }
 }
 
-export async function updateUsuario(id, updateData) {
+export async function updateUser(id, updateData) {
     try{
     const conn = await connectToDB();
 
@@ -107,7 +107,7 @@ export async function updateUsuario(id, updateData) {
     }
 }
 
-export async function deleteUsuario(id) {
+export async function deleteUser(id) {
     const conn = await connectToDB();
     const [result] = await conn.execute(
         "DELETE FROM users WHERE id = ?",
@@ -117,17 +117,17 @@ export async function deleteUsuario(id) {
     return result;
 }
 
-export async function getOneUsuario(id) {
+export async function getOneUser(id) {
     const conn = await connectToDB();
     const [rows] = await conn.execute(
-        "SELECT * FROM users WHERE id = ?",
+        "SELECT id, username, role FROM users WHERE id = ?",
         [id]
     );
     conn.end();
     return rows[0];
 }
 
-export async function createUsuario(username, password, role) {
+export async function createUser(username, password, role) {
     if (!username || !password || !role) {
         throw new Error('Username, password, and role are required');
     }
