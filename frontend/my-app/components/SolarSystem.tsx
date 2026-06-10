@@ -48,7 +48,7 @@ export default function SolarSystem() {
           </Orbit>
 
           <Orbit radius={16} speed={0.35}>
-            <Planet name="neptune" scale={2} state="transmitting" glowColor="#037028" glowSize={0.7} />
+            <Planet name="neptune" scale={2} state="transmitting" />
           </Orbit>
 
           <Orbit radius={22} speed={0.27}>

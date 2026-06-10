@@ -72,7 +72,40 @@ const glowFragmentShader = /* glsl */ `
   }
 `;
 
-function Glow({
+// ── Transmitting pulse rings ─────────────────────────────────
+const pulseVertexShader = /* glsl */ `
+  varying vec3 vNormal;
+  varying vec3 vWorldPos;
+  void main() {
+    vNormal = normalize(normalMatrix * normal);
+    vec4 wp = modelMatrix * vec4(position, 1.0);
+    vWorldPos = wp.xyz;
+    gl_Position = projectionMatrix * viewMatrix * wp;
+  }
+`;
+
+const pulseFragmentShader = /* glsl */ `
+  uniform vec3 ringColor;
+  uniform float progress;
+  uniform float thickness;
+  uniform float opacity;
+  varying vec3 vNormal;
+  void main() {
+    float lat = abs(vNormal.y);
+    float band = abs(lat - progress);
+    // Hard discard everything outside the ring band — no full-sphere fill
+    if (band > thickness) discard;
+    float alpha = smoothstep(thickness, 0.0, band) * opacity;
+    if (alpha < 0.001) discard;
+    float core = smoothstep(thickness, 0.0, band * 0.4);
+    gl_FragColor = vec4(ringColor + core * 0.6, alpha);
+  }
+`;
+
+const RING_COUNT = 4;
+const RING_SPEED = 0.55; // full sweep in ~1.8s
+
+function Transmitting({
   center,
   radius,
   color,
@@ -83,33 +116,66 @@ function Glow({
   color: string;
   size: number;
 }) {
-  const uniforms = useMemo(
-    () => ({
-      glowColor: { value: new Color(color) },
-      coefficient: { value: 0.65 },
-      power: { value: 3.5 },
-    }),
-    [color]
-  );
+  const lightRef = useRef<any>(null);
+  const materialRefs = useRef<any[]>([]);
+
+  // Stable uniform objects — created once, mutated every frame
+  const uniforms = useRef(
+    Array.from({ length: RING_COUNT }, (_, i) => ({
+      ringColor:  { value: new Color(color) },
+      progress:   { value: i / RING_COUNT },
+      thickness:  { value: 0.18 },
+      opacity:    { value: 1.0 },
+    }))
+  ).current;
+
+  useFrame(({ clock }) => {
+    const t = clock.elapsedTime;
+    for (let i = 0; i < RING_COUNT; i++) {
+      const phase = (t * RING_SPEED + i / RING_COUNT) % 1;
+      // Write directly to the material's own uniforms
+      const mat = materialRefs.current[i];
+      if (mat) {
+        mat.uniforms.progress.value = phase;
+        mat.uniforms.opacity.value  = Math.pow(1.0 - phase, 2.0) * 1.8;
+      }
+    }
+    if (lightRef.current) {
+      const pulse = 0.5 + 0.5 * Math.sin(t * RING_SPEED * Math.PI * 2 * RING_COUNT);
+      lightRef.current.intensity = 2.0 + pulse * 4.0;
+    }
+  });
+
+  const sphereRadius = radius * size * 1.02; 
 
   return (
     <group position={center}>
-      <mesh scale={size}>
-        <sphereGeometry args={[radius, 48, 48]} />
-        <shaderMaterial
-          uniforms={uniforms}
-          vertexShader={glowVertexShader}
-          fragmentShader={glowFragmentShader}
-          transparent
-          blending={AdditiveBlending}
-          side={BackSide}
-          depthWrite={false}
-        />
-      </mesh>
-      <pointLight color={color} intensity={3} distance={radius * 10} decay={2} />
+      {uniforms.map((u, i) => (
+        <mesh key={i}>
+          <sphereGeometry args={[sphereRadius, 48, 48]} />
+          <shaderMaterial
+            ref={(el) => { materialRefs.current[i] = el; }}
+            uniforms={u}
+            vertexShader={pulseVertexShader}
+            fragmentShader={pulseFragmentShader}
+            transparent
+            depthWrite={false}
+            blending={AdditiveBlending}
+            side={BackSide}
+          />
+        </mesh>
+      ))}
+      <pointLight
+        ref={lightRef}
+        color={color}
+        intensity={3}
+        distance={radius * 12}
+        decay={2}
+      />
     </group>
   );
 }
+
 
 // ── Shared geometries, built once ────────────────────────────
 const HEART_GEOMETRY = (() => {
@@ -259,7 +325,7 @@ export default function Planet({
   position = [0, 0, 0],
   rotationSpeed = 0.2,
   state = "none",
-  glowColor = "#22ff66",
+  glowColor = "#05f250",
   glowSize = 1.15,
   heartColor = "#ff3b6b",
   heartCount = 5,
@@ -304,7 +370,7 @@ export default function Planet({
       )}
 
       {state === "transmitting" && (
-        <Glow
+        <Transmitting
           center={bounds.center}
           radius={bounds.radius}
           color={glowColor}
