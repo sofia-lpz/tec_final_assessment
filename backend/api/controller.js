@@ -23,7 +23,7 @@ export const login = async (req, res) => {
     }
 };
 
-//Usuarios
+//Users
 export const getUsers = async (req, res) => {
     try {
         if ("_sort" in req.query) {
@@ -104,6 +104,73 @@ export const getOneUser = async (req, res) => {
     }
     try {
         const data = await Service.getOneUser(req.params.id);
+        res.json(data);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
+
+//Scenarios
+export const createScenario = async (req, res) => {
+    try {
+        const { name, description } = req.body;
+        const userId = req.userId; // From JWT token
+        const scenarioId = await Service.createScenario(name, description, userId);
+        res.json({ id: scenarioId, name, description, userId });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
+
+export const getScenariosByUser = async (req, res) => {
+    try {
+        const scenarios = await Service.getScenariosByUser(req.userId);
+        res.json(scenarios);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
+
+export const getOneScenarioByUser = async (req, res) => {
+    try {
+        const scenario = await Service.getOneScenarioByUser(req.params.id, req.userId);
+        if (!scenario) {
+            return res.status(404).json({ error: "Scenario not found" });
+        }
+        res.json(scenario);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
+
+export const updateScenario = async (req, res) => {
+    if (!req.params.id) {
+        res.status(400).json({ error: "ID is required" });
+        return;
+    }
+    try {
+        const scenario = await Service.getOneScenarioByUser(req.params.id, req.userId);
+        if (!scenario) {
+            return res.status(403).json({ error: "Access denied" });
+        }
+        const data = await Service.updateScenario(req.params.id, req.body);
+        res.json(data);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
+
+export const deleteScenario = async (req, res) => {
+    if (!req.params.id) {
+        res.status(400).json({ error: "ID is required" });
+        return;
+    }
+    try {
+        const scenario = await Service.getOneScenarioByUser(req.params.id, req.userId);
+        if (!scenario) {
+            return res.status(403).json({ error: "Access denied" });
+        }
+        const data = await Service.deleteScenario(req.params.id);
         res.json(data);
     } catch (error) {
         res.status(500).json({ error: error.message });

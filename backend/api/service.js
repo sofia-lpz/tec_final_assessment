@@ -9,7 +9,7 @@ export const login = async (username, password) => {
     }
 };
 
-//Usuarios
+//Users
 export const getUsers = async (req) => {
     try {
         const user = await db.getUsers(req);
@@ -20,7 +20,6 @@ export const getUsers = async (req) => {
         throw error;
     }
 }
-
 export const updateUser = async (id, updateData) => {
     try {
         const result = await db.updateUser(Number(id), updateData);
@@ -30,7 +29,6 @@ export const updateUser = async (id, updateData) => {
         throw error;
     }
 };
-
 export const createUser = async (username, password, role) => {
     try {
         const result = await db.createUser(username, password, role);
@@ -40,7 +38,6 @@ export const createUser = async (username, password, role) => {
         throw error;
     }
 };
-
 export const deleteUser = async (id) => {
     try {
         const result = await db.deleteUser(Number(id));
@@ -50,7 +47,6 @@ export const deleteUser = async (id) => {
         throw error;
     }
 };
-
 export const getOneUser = async (id) => {
     try {
         const result = await db.getOneUser(Number(id));
@@ -59,4 +55,65 @@ export const getOneUser = async (id) => {
     catch (error) {
         throw error;
     }
-}   
+}
+export const countAdminUsers = async () => {
+    try {
+        const result = await db.countAdminUsers();
+        return result;
+    }
+    catch (error) {
+        throw error;
+    }
+}
+
+//Scenarios
+
+export const createScenario = async (name, description, userId) => {
+    try {
+        const result = await db.createScenario(name, description, userId);
+        return result;
+    }
+    catch (error) {
+        throw error;
+    }
+}
+
+export const getScenariosByUser = async (userId) => {
+    try {
+        const scenarios = await db.getScenariosByUser(userId);
+        return scenarios;
+    }
+    catch (error) {
+        throw error;
+    }
+}
+
+export const getOneScenarioByUser = async (scenarioId, userId) => {
+    try {
+        const scenario = await db.getOneScenarioByUser(scenarioId, userId);
+        return scenario;
+    }
+    catch (error) {
+        throw error;
+    }
+}
+
+export const updateScenario = async (id, updateData) => {
+    try {
+        const result = await db.updateScenario(Number(id), updateData);
+        return result;
+    }
+    catch (error) {
+        throw error;
+    }
+}
+
+export const deleteScenario = async (id) => {
+    try {
+        const result = await db.deleteScenario(Number(id));
+        return result;
+    }
+    catch (error) {
+        throw error;
+    }
+}

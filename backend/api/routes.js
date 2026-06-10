@@ -15,4 +15,11 @@ router.post('/usuarios', verifyToken, checkAdminRole, Controller.createUser);
 router.delete('/usuarios/:id', verifyToken, checkAdminRole, Controller.deleteUser);
 router.get('/usuarios/:id', verifyToken, checkAdminRole, Controller.getOneUser);
 
+//scenarios routes
+router.get('/scenarios', verifyToken, Controller.getScenariosByUser);
+router.post('/scenarios', verifyToken, Controller.createScenario);
+router.get('/scenarios/:id', verifyToken, Controller.getOneScenarioByUser);
+router.put('/scenarios/:id', verifyToken, Controller.updateScenario);
+router.delete('/scenarios/:id', verifyToken, Controller.deleteScenario);    
+
 export { router };

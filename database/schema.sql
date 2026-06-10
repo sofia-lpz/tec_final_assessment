@@ -8,3 +8,11 @@ CREATE TABLE users (
     role enum('admin', 'user') NOT NULL DEFAULT 'user',
     PRIMARY KEY (id)
 );
+
+CREATE TABLE scenarios (
+    id int NOT NULL AUTO_INCREMENT,
+    user_id int NOT NULL,
+    name varchar(255) NOT NULL,
+    PRIMARY KEY (id),
+    FOREIGN KEY (user_id) REFERENCES users(id)
+)
