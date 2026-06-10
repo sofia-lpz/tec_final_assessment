@@ -10,19 +10,20 @@ export const login = async (username, password) => {
 };
 
 //Usuarios
-export const getUsuarios = async (req) => {
+export const getUsers = async (req) => {
     try {
-        const result = await db.getUsuarios(req);
-        return result;
+        const user = await db.getUsers(req);
+        
+        return user;
     }
     catch (error) {
         throw error;
     }
 }
 
-export const updateUsuario = async (id, updateData) => {
+export const updateUser = async (id, updateData) => {
     try {
-        const result = await db.updateUsuario(Number(id), updateData);
+        const result = await db.updateUser(Number(id), updateData);
         return result;
     }
     catch (error) {
@@ -30,9 +31,9 @@ export const updateUsuario = async (id, updateData) => {
     }
 };
 
-export const createUsuario = async (username, password, role) => {
+export const createUser = async (username, password, role) => {
     try {
-        const result = await db.createUsuario(username, password, role);
+        const result = await db.createUser(username, password, role);
         return result;
     }
     catch (error) {
@@ -40,9 +41,9 @@ export const createUsuario = async (username, password, role) => {
     }
 };
 
-export const deleteUsuario = async (id) => {
+export const deleteUser = async (id) => {
     try {
-        const result = await db.deleteUsuario(Number(id));
+        const result = await db.deleteUser(Number(id));
         return result;
     }
     catch (error) {
@@ -50,9 +51,9 @@ export const deleteUsuario = async (id) => {
     }
 };
 
-export const getOneUsuario = async (id) => {
+export const getOneUser = async (id) => {
     try {
-        const result = await db.getOneUsuario(Number(id));
+        const result = await db.getOneUser(Number(id));
         return result;
     }
     catch (error) {
