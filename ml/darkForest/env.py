@@ -8,17 +8,7 @@ from pettingzoo import ParallelEnv
 from Civilizations import Civilization
 from Planets import Planet
 
-SCIENCE_PER_RANGE = 50          
-BIRTH_RATE_STEP = 0.1
-COLONIZE_COST = 50
-CONQUER_COST = 100              
-DESTROY_COST = 150
-SCIENCE_PER_EXPLORE = 1         
-SCIENCE_PER_BROADCAST = 5
-CONQUER_SCIENCE_FRACTION = 0.5  
-
-MIN_PLANET_RESOURCES = 50
-MAX_PLANET_RESOURCES = 200
+from rewards import *
 
 _MAP_CHANNELS = (
     "explored",        
@@ -49,6 +39,9 @@ class DarkForestParallelEnv(ParallelEnv):
         initial_science: float = 0.0,
         initial_resources: float = 50.0,
         harvest_rate: float = 0.1,
+        birth_rate: float = 0.05,
+        death_rate: float = 0.02,
+        population_consumption: float = 0.1,
         reward_weights: dict | None = None,
         render_mode: str | None = None,
     ):
@@ -61,6 +54,9 @@ class DarkForestParallelEnv(ParallelEnv):
         self.initial_science = float(initial_science)
         self.initial_resources = float(initial_resources)
         self.harvest_rate = float(harvest_rate)
+        self.birth_rate = float(birth_rate)
+        self.death_rate = float(death_rate)
+        self.population_consumption = float(population_consumption)
         self.render_mode = render_mode
 
         if self.initial_planets < len(self.possible_agents):
@@ -70,17 +66,8 @@ class DarkForestParallelEnv(ParallelEnv):
                 "every civilization must spawn on its own planet."
             )
 
-        self.reward_weights = {
-            "explore": 0.1,        # per newly explored cell
-            "broadcast": 0.5,      # per civ that newly hears the broadcast
-            "survive": 0.1,        # per step still alive
-            "population": 0.01,    # per unit change in population (signed)
-            "science": 0.01,       # per unit change in science (signed)
-            "colonize": 1.0,       # successful empty colonization
-            "conquer": 2.0,        # successful hostile takeover
-            "destroyed": 10.0,     # subtracted if this civ is wiped this step
-            "invalid": 0.0,        # subtracted if a (masked-out) action is a no-op
-        }
+        self.reward_weights = dict_reward_weights.copy()
+        
         if reward_weights:
             self.reward_weights.update(reward_weights)
 
@@ -160,6 +147,9 @@ class DarkForestParallelEnv(ParallelEnv):
                 population=self.initial_population,
                 science=self.initial_science,
                 resources=self.initial_resources,
+                birth_rate=self.birth_rate,
+                death_rate=self.death_rate,
+                population_consumption=self.population_consumption,
                 harvest_rate=self.harvest_rate,
             )
 

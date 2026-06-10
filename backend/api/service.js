@@ -9,10 +9,56 @@ export const login = async (username, password) => {
     }
 };
 
-//Usuarios
-export const getUsuarios = async (req) => {
+//Users
+export const getUsers = async (req) => {
     try {
-        const result = await db.getUsuarios(req);
+        const user = await db.getUsers(req);
+        
+        return user;
+    }
+    catch (error) {
+        throw error;
+    }
+}
+export const updateUser = async (id, updateData) => {
+    try {
+        const result = await db.updateUser(Number(id), updateData);
+        return result;
+    }
+    catch (error) {
+        throw error;
+    }
+};
+export const createUser = async (username, password, role) => {
+    try {
+        const result = await db.createUser(username, password, role);
+        return result;
+    }
+    catch (error) {
+        throw error;
+    }
+};
+export const deleteUser = async (id) => {
+    try {
+        const result = await db.deleteUser(Number(id));
+        return result;
+    }
+    catch (error) {
+        throw error;
+    }
+};
+export const getOneUser = async (id) => {
+    try {
+        const result = await db.getOneUser(Number(id));
+        return result;
+    }
+    catch (error) {
+        throw error;
+    }
+}
+export const countAdminUsers = async () => {
+    try {
+        const result = await db.countAdminUsers();
         return result;
     }
     catch (error) {
@@ -20,42 +66,54 @@ export const getUsuarios = async (req) => {
     }
 }
 
-export const updateUsuario = async (id, updateData) => {
-    try {
-        const result = await db.updateUsuario(Number(id), updateData);
-        return result;
-    }
-    catch (error) {
-        throw error;
-    }
-};
+//Scenarios
 
-export const createUsuario = async (username, password, role) => {
+export const createScenario = async (name, description, userId) => {
     try {
-        const result = await db.createUsuario(username, password, role);
+        const result = await db.createScenario(name, description, userId);
         return result;
     }
     catch (error) {
         throw error;
     }
-};
+}
 
-export const deleteUsuario = async (id) => {
+export const getScenariosByUser = async (userId) => {
     try {
-        const result = await db.deleteUsuario(Number(id));
-        return result;
+        const scenarios = await db.getScenariosByUser(userId);
+        return scenarios;
     }
     catch (error) {
         throw error;
     }
-};
+}
 
-export const getOneUsuario = async (id) => {
+export const getOneScenarioByUser = async (scenarioId, userId) => {
     try {
-        const result = await db.getOneUsuario(Number(id));
+        const scenario = await db.getOneScenarioByUser(scenarioId, userId);
+        return scenario;
+    }
+    catch (error) {
+        throw error;
+    }
+}
+
+export const updateScenario = async (id, updateData) => {
+    try {
+        const result = await db.updateScenario(Number(id), updateData);
         return result;
     }
     catch (error) {
         throw error;
     }
-}   
+}
+
+export const deleteScenario = async (id) => {
+    try {
+        const result = await db.deleteScenario(Number(id));
+        return result;
+    }
+    catch (error) {
+        throw error;
+    }
+}
