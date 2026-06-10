@@ -1,0 +1,14 @@
+ml/darkForest/__pycache__/Civilizations.cpython-312.pyc
+ml/darkForest/__pycache__/env.cpython-312.pyc
+ml/darkForest/__pycache__/Planets.cpython-312.pyc
+ml/darkForest/__pycache__/rewards.cpython-312.pyc
+ml/darkForest/__pycache__/stopper.cpython-312.pyc
+ml/darkForest/__pycache__/utils.cpython-312.pyc
+ml/darkForest/__pycache__/**
+ml/darkForest/.vscode/settings.json
+ml/darkForest/runs/darkforest_torchrl_independent_1781081817/render/final_ep00.json
+ml/darkForest/runs/darkforest_torchrl_independent_1781081817/checkpoint.pt
+ml/darkForest/runs/darkforest_torchrl_independent_1781081556/render/final_ep00.json
+ml/darkForest/runs/darkforest_torchrl_independent_1781081556/checkpoint.pt
+ml/darkForest/runs/darkforest_torchrl_independent_1781081054/render/final_ep00.json
+ml/darkForest/runs/darkforest_torchrl_independent_1781081054/checkpoint.pt

@@ -1,27 +1,18 @@
-SCIENCE_PER_RANGE = 50          
-BIRTH_RATE_STEP = 0.1
-COLONIZE_COST = 50
-CONQUER_COST = 100
-DESTROY_COST = 150
-SCIENCE_PER_EXPLORE = 1
-SCIENCE_PER_BROADCAST = 5
-CONQUER_SCIENCE_FRACTION = 0.5 
-
-MIN_PLANET_RESOURCES = 50
-MAX_PLANET_RESOURCES = 200
+from rewards import *
 
 class Civilization:
     def __init__(self, env, name, coord,
-                 population, science, resources, harvest_rate):
+                 population, science, resources, birth_rate, death_rate, population_consumption,
+                 harvest_rate):
         self.env = env
         self.name = name
-        self.coord = coord
+        self.coord = coord #planet coordinates
         self.population = population
         self.science = science
         self.resources = resources
-        self.birth_rate = 1.0
-        self.death_rate = 0.5
-        self.population_consumption = 1.0
+        self.birth_rate = birth_rate
+        self.death_rate = death_rate
+        self.population_consumption = population_consumption
         self.harvest_rate = harvest_rate
         self.known_civilizations = []
         self.explored_cells = set()
@@ -32,6 +23,7 @@ class Civilization:
         if home is not None and not home.destroyed and home.civilization is None:
             home.civilization = self
 
+#helpers
     def _all_civilizations(self):
         return [c for c in self.env.civs.values() if c is not self and c.alive]
 
@@ -57,6 +49,7 @@ class Civilization:
         return 1 + int(self.science // SCIENCE_PER_RANGE)
 
     def update(self):
+        # Harvest resources from planets
         if self.harvest_rate:
             income = sum(
                 self.harvest_rate * p.resources
@@ -65,12 +58,15 @@ class Civilization:
             )
             self.resources += income
 
+        # Update population based on birth and death rates, and consume resources
         births = self.population * self.birth_rate
         deaths = self.population * self.death_rate
         self.population += births - deaths
 
         needed = self.population * self.population_consumption
         self.resources -= needed
+
+        # starve if resources are insufficient
         if self.resources < 0:
             starved = min(self.population, -self.resources)
             self.population -= starved
@@ -93,20 +89,14 @@ class Civilization:
         self.science += newly * SCIENCE_PER_EXPLORE
         return newly
 
-    def increase_birth_rate(self):
-        self.birth_rate += BIRTH_RATE_STEP
-        return self.birth_rate
-
     def broadcast_position(self):
+        # TODO: maybe reward even when fc
         newly_reached = 0
         for civ in self._all_civilizations():
             if self not in civ.known_civilizations:
                 civ.known_civilizations.append(self)
                 newly_reached += 1
             civ.explored_cells.add(self.coord)
-            self.explored_cells.add(civ.coord)
-            if civ not in self.known_civilizations:
-                self.known_civilizations.append(civ)
         self.science += newly_reached * SCIENCE_PER_BROADCAST
         return newly_reached
 
