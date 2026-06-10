@@ -1,31 +1,22 @@
-import Link from "next/link";
+// components/Header.tsx
+"use client";
 
-export default function Header() {
+export default function Header({ children }: { children: React.ReactNode }) {
   return (
-    <header className="top-0 left-0 right-0 z-50 flex h-16 items-center justify-between bg-black/50 px-6 backdrop-blur-md border-b border-white/10">
-      <div className="flex items-center gap-2">
-        <Link href="/" className="text-xl font-bold tracking-widest text-white hover:text-blue-400 transition-colors">
-          SOLAR SYSTEM
-        </Link>
+    <header className="fixed top-0 w-full z-50 h-24 px-12 bg-black/50 backdrop-blur-md border-b border-white/10 flex items-center">
+      
+      <div className="w-1/3"></div>
+
+      <div className="w-1/3 flex justify-center">
+        <h1 className="text-white font-black tracking-widest text-5xl">
+          DARK FOREST
+        </h1>
+      </div>
+
+      <div className="w-1/3 flex justify-end">
+        {children}
       </div>
       
-      <nav className="flex items-center gap-6 text-sm font-medium text-gray-300">
-        <Link href="/" className="hover:text-white transition-colors">
-          Home
-        </Link>
-        <Link href="/planets" className="hover:text-white transition-colors">
-          Planets
-        </Link>
-        <Link href="/civilizations" className="hover:text-white transition-colors">
-          Civilizations
-        </Link>
-      </nav>
-
-      <div className="flex items-center gap-4">
-        <button className="px-4 py-2 text-sm font-semibold text-black bg-white rounded-md hover:bg-gray-200 transition-colors">
-          Connect
-        </button>
-      </div>
     </header>
   );
 }
