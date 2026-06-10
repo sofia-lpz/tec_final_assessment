@@ -111,9 +111,9 @@ export default function SolarSystem() {
             />
           ))}
         </Suspense>
-
+            // take out target if we want free camera
         <GridCells />
-
+        
         <OrbitControls
           makeDefault
           target={[0, 0, 0]}
