@@ -10,7 +10,7 @@ CONQUER_SCIENCE_FRACTION = 0.5
 MIN_PLANET_RESOURCES = 50
 MAX_PLANET_RESOURCES = 200
 
-ADD_BIRTH_RATE_COST = 1
+ADD_BIRTH_RATE_COST = 100
 
 dict_reward_weights = {
             "explore": 0.1,        # per newly explored cell
