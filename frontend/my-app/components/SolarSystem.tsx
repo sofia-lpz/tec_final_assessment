@@ -7,7 +7,7 @@ import Star from "@/components/Star";
 import type { PlanetState } from "@/components/Planet";
 
 // ── Grid config ──────────────────────────────────────────────
-const STAR_SCALE = 10;
+const STAR_SCALE = 11;
 const CELL_SIZE = STAR_SCALE * 3;
 
 // Grid dimensions — controls how many cells fan out from the centre.
@@ -42,13 +42,13 @@ type PlanetDef = {
 };
 
 const PLANETS: PlanetDef[] = [
-  { name: "neptune", grid: [2, 5], scale: 2, state: "none",        glowColor: "#037028", glowSize: 0.7 },
-  { name: "neptune", grid: [3, 5], scale: 2, state: "transmitting" },
-  { name: "neptune", grid: [4, 5], scale: 2, state: "birthplus",   glowColor: "#037028", glowSize: 0.7 },
-  { name: "neptune", grid: [6, 5], scale: 2, state: "scienceplus", glowColor: "#037028", glowSize: 0.7 },
-  { name: "neptune", grid: [7, 5], scale: 2, state: "none" },
-  { name: "neptune", grid: [8, 5], scale: 2, state: "transmitting" },
-  { name: "neptune", grid: [0, 0], scale: 2, state: "transmitting" },
+  { name: "neptune", grid: [2, 5], scale: 4, state: "none",        glowColor: "#037028", glowSize: 0.7 },
+  { name: "neptune", grid: [3, 5], scale: 4, state: "transmitting" },
+  { name: "neptune", grid: [4, 5], scale: 4, state: "birthplus",   glowColor: "#037028", glowSize: 0.7 },
+  { name: "neptune", grid: [6, 5], scale: 4, state: "scienceplus", glowColor: "#037028", glowSize: 0.7 },
+  { name: "neptune", grid: [7, 5], scale: 4, state: "none" },
+  { name: "neptune", grid: [8, 5], scale: 4, state: "transmitting" },
+  { name: "neptune", grid: [0, 0], scale: 4, state: "transmitting" },
 ];
 
 // Top-left grid coords → centred world coords.
