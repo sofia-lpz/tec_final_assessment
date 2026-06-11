@@ -1,28 +1,52 @@
-#train
-
 import argparse
+import json
 import os
 import sys
 import time
 from collections import deque
 
+from stopper import DarkForestStopper
+from utils import ObsFlatten, MaskSanitize
+
+
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.optim as optim
-from torch.distributions.categorical import Categorical
+from tensordict import TensorDict
+from tensordict.nn import TensorDictModule, TensorDictSequential
+
+try:  # torchrl >= 0.10 renamed SyncDataCollector -> Collector
+    from torchrl.collectors import Collector as SyncDataCollector
+except ImportError:
+    from torchrl.collectors import SyncDataCollector
+from torchrl.data import LazyTensorStorage, ReplayBuffer
+from torchrl.data.replay_buffers.samplers import SamplerWithoutReplacement
+from torchrl.envs import RewardSum, StepCounter, TransformedEnv
+from torchrl.envs.batched_envs import SerialEnv
+from torchrl.envs.libs.pettingzoo import PettingZooWrapper
+from torchrl.envs.utils import ExplorationType, MarlGroupMapType, set_exploration_type
+from torchrl.modules import MaskedCategorical, MultiAgentMLP, ProbabilisticActor
+from torchrl.objectives import ClipPPOLoss, ValueEstimators
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from env import DarkForestParallelEnv, A_BROADCAST  
+from env import (  # noqa: E402
+    DarkForestParallelEnv,
+    A_EXPLORE,
+    A_BIRTH,
+    A_BROADCAST,
+    N_NONTARGETED,
+)
 
+GROUP = "agents"
 
 def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("--seed", type=int, default=1)
     p.add_argument("--torch-deterministic", action="store_true", default=True)
     p.add_argument("--run-name", type=str, default=None)
-    p.add_argument("--tensorboard", action="store_true", default=False)
+    p.add_argument("--device", type=str, default="auto")
 
+    # environment
     p.add_argument("--num-envs", type=int, default=4)
     p.add_argument("--names", type=str, nargs="+",
                    default=["Santi", "earth", "aliens"],
@@ -38,17 +62,18 @@ def parse_args():
                    help="override env reward weights, e.g. "
                         "--reward broadcast=0 destroyed=50 conquer=3")
 
+    # PPO
     p.add_argument("--total-timesteps", type=int, default=1_000_000,
                    help="env transitions (num_envs*num_steps per iteration)")
     p.add_argument("--learning-rate", type=float, default=2.5e-4)
     p.add_argument("--anneal-lr", action="store_true", default=True)
-    p.add_argument("--num-steps", type=int, default=128)
+    p.add_argument("--num-steps", type=int, default=128,
+                   help="rollout length per env per iteration")
     p.add_argument("--gamma", type=float, default=0.99)
     p.add_argument("--gae-lambda", type=float, default=0.95)
     p.add_argument("--num-minibatches", type=int, default=4)
     p.add_argument("--update-epochs", type=int, default=4)
     p.add_argument("--clip-coef", type=float, default=0.2)
-    p.add_argument("--clip-vloss", action="store_true", default=True)
     p.add_argument("--ent-coef", type=float, default=0.01)
     p.add_argument("--vf-coef", type=float, default=0.5)
     p.add_argument("--max-grad-norm", type=float, default=0.5)
@@ -56,458 +81,268 @@ def parse_args():
     p.add_argument("--target-kl", type=float, default=None)
     p.add_argument("--hidden-dim", type=int, default=256)
     p.add_argument("--critic", choices=["independent", "centralized"],
-                   default="independent")
+                   default="independent",
+                   help="independent=IPPO, centralized=MAPPO")
 
+    # dark-forest stopper
     p.add_argument("--stop-mode",
                    choices=["silence", "extermination", "either", "off"],
-                   default="silence",
-                   help="silence: broadcast rate collapses to ~0 after being "
-                        "used; extermination: episodes reliably end with <=1 "
-                        "survivor; either: whichever first; off: train to "
-                        "--total-timesteps.")
-    p.add_argument("--min-iters", type=int, default=30,
-                   help="never stop before this many iterations (avoids "
-                        "stopping on initial randomness)")
-    p.add_argument("--silence-threshold", type=float, default=0.01,
-                   help="broadcast-rate EMA below this counts as 'silent'")
-    p.add_argument("--silence-patience", type=int, default=10,
-                   help="consecutive silent iterations required to stop")
-    p.add_argument("--broadcast-peak-threshold", type=float, default=0.05,
-                   help="broadcasting must have peaked at least this high, so "
-                        "we only stop on *learned* silence, not never-used")
-    p.add_argument("--silence-rel-drop", type=float, default=0.25,
-                   help="also count as 'silent' if the EMA falls to this "
-                        "fraction of its peak (captures collapse without "
-                        "needing the rate to literally hit 0)")
-    p.add_argument("--annihilation-threshold", type=float, default=0.95,
-                   help="fraction of recent episodes ending with <=1 survivor")
+                   default="silence")
+    p.add_argument("--min-iters", type=int, default=30)
+    p.add_argument("--silence-threshold", type=float, default=0.01)
+    p.add_argument("--silence-patience", type=int, default=10)
+    p.add_argument("--broadcast-peak-threshold", type=float, default=0.05)
+    p.add_argument("--silence-rel-drop", type=float, default=0.25)
+    p.add_argument("--annihilation-threshold", type=float, default=0.95)
     p.add_argument("--ema-beta", type=float, default=0.9)
+
+    # rendering / recording
+    p.add_argument("--record-every", type=int, default=0,
+                   help="record one render episode every N iterations "
+                        "(0 = only at the end)")
+    p.add_argument("--record-episodes", type=int, default=1,
+                   help="episodes recorded after training finishes")
+    p.add_argument("--record-deterministic", action="store_true", default=False,
+                   help="use argmax actions when recording")
     return p.parse_args()
 
+def make_base_env(args):
+    return DarkForestParallelEnv(
+        names=args.names, width=args.width, height=args.height,
+        initial_planets=args.initial_planets, max_steps=args.max_steps,
+        harvest_rate=args.harvest_rate,
+        initial_resources=args.initial_resources,
+        initial_population=args.initial_population,
+        reward_weights=args.reward_weights or None,
+    )
 
-class CategoricalMasked(Categorical):
-    def __init__(self, logits, masks):
-        masks = masks.bool()
-        empty = ~masks.any(dim=-1)
-        if empty.any():
-            masks = masks.clone()
-            masks[empty, 0] = True
-        self.masks = masks
-        neg = torch.finfo(logits.dtype).min
-        logits = torch.where(self.masks, logits, torch.full_like(logits, neg))
-        super().__init__(logits=logits)
-
-    def entropy(self):
-        p_log_p = self.logits * self.probs
-        p_log_p = torch.where(self.masks, p_log_p, torch.zeros_like(p_log_p))
-        return -p_log_p.sum(-1)
-
-
-def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
-    nn.init.orthogonal_(layer.weight, std)
-    nn.init.constant_(layer.bias, bias_const)
-    return layer
-
-
-class Agent(nn.Module):
-    def __init__(self, obs_dim, action_dim, state_dim, n_agents,
-                 critic_mode, hidden=256):
-        super().__init__()
-        self.critic_mode = critic_mode
-        self.n_agents = n_agents
-
-        self.actor = nn.Sequential(
-            layer_init(nn.Linear(obs_dim, hidden)), nn.Tanh(),
-            layer_init(nn.Linear(hidden, hidden)), nn.Tanh(),
-            layer_init(nn.Linear(hidden, action_dim), std=0.01),
+def make_torchrl_env(args, device):
+    def maker():
+        wrapped = PettingZooWrapper(
+            make_base_env(args),
+            group_map=MarlGroupMapType.ALL_IN_ONE_GROUP,
+            use_mask=True,              # exposes (GROUP, "mask"): agent alive?
+            categorical_actions=True,
+            device=device,
         )
-        critic_in = (state_dim + n_agents) if critic_mode == "centralized" else obs_dim
-        self.critic = nn.Sequential(
-            layer_init(nn.Linear(critic_in, hidden)), nn.Tanh(),
-            layer_init(nn.Linear(hidden, hidden)), nn.Tanh(),
-            layer_init(nn.Linear(hidden, 1), std=1.0),
-        )
+        return wrapped
 
-    def get_value(self, obs, state, onehot):
-        if self.critic_mode == "centralized":
-            return self.critic(torch.cat([state, onehot], dim=-1))
-        return self.critic(obs)
+    env = SerialEnv(args.num_envs, maker, device=device)
+    env = TransformedEnv(
+        env,
+        RewardSum(
+            in_keys=[(GROUP, "reward")],
+            out_keys=[(GROUP, "episode_reward")],
+        ),
+    )
+    env.append_transform(StepCounter())
+    return env
 
-    def get_action_and_value(self, obs, mask, state, onehot, action=None):
-        logits = self.actor(obs)
-        dist = CategoricalMasked(logits, mask)
-        if action is None:
-            action = dist.sample()
-        return (action, dist.log_prob(action), dist.entropy(),
-                self.get_value(obs, state, onehot).squeeze(-1))
+def build_models(args, env, device):
+    obs_spec = env.observation_spec[GROUP, "observation"]
+    c, h, w = obs_spec["map"].shape[-3:]
+    self_dim = obs_spec["self"].shape[-1]
+    obs_dim = c * h * w + self_dim
+    n_agents = obs_spec["map"].shape[-4]
+    action_dim = env.full_action_spec[GROUP, "action"].space.n
 
+    features = TensorDictModule(
+        ObsFlatten(),
+        in_keys=[(GROUP, "observation", "map"), (GROUP, "observation", "self")],
+        out_keys=[(GROUP, "obs_flat")],
+    )
+    sanitize = TensorDictModule(
+        MaskSanitize(),
+        in_keys=[(GROUP, "action_mask")],
+        out_keys=[(GROUP, "valid_mask")],
+    )
 
-class MAVecEnv:
-    def __init__(self, env_fns):
-        self.envs = [fn() for fn in env_fns]
-        self.num_envs = len(self.envs)
-        e0 = self.envs[0]
-        self.possible_agents = list(e0.possible_agents)
-        self.N = len(self.possible_agents)
-        self._slot = {n: i for i, n in enumerate(self.possible_agents)}
+    actor_net = TensorDictModule(
+        MultiAgentMLP(
+            n_agent_inputs=obs_dim,
+            n_agent_outputs=action_dim,
+            n_agents=n_agents,
+            centralised=False,
+            share_params=True,
+            device=device,
+            depth=2,
+            num_cells=args.hidden_dim,
+            activation_class=nn.Tanh,
+        ),
+        in_keys=[(GROUP, "obs_flat")],
+        out_keys=[(GROUP, "logits")],
+    )
+    policy = ProbabilisticActor(
+        module=TensorDictSequential(features, sanitize, actor_net),
+        spec=env.full_action_spec[GROUP, "action"],
+        in_keys={"logits": (GROUP, "logits"), "mask": (GROUP, "valid_mask")},
+        out_keys=[(GROUP, "action")],
+        distribution_class=MaskedCategorical,
+        return_log_prob=True,
+        log_prob_key=(GROUP, "sample_log_prob"),
+    )
 
-        msp = e0.observation_space(self.possible_agents[0])
-        c, h, w = msp["map"].shape
-        self.map_size = c * h * w
-        self.self_size = msp["self"].shape[0]
-        self.obs_dim = self.map_size + self.self_size
-        self.action_dim = e0.action_dim
-        self.state_dim = e0.state_space.shape[0]
+    critic_net = TensorDictModule(
+        MultiAgentMLP(
+            n_agent_inputs=obs_dim,
+            n_agent_outputs=1,
+            n_agents=n_agents,
+            centralised=(args.critic == "centralized"),  # MAPPO vs IPPO
+            share_params=True,
+            device=device,
+            depth=2,
+            num_cells=args.hidden_dim,
+            activation_class=nn.Tanh,
+        ),
+        in_keys=[(GROUP, "obs_flat")],
+        out_keys=[(GROUP, "state_value")],
+    )
+    critic = TensorDictSequential(features, critic_net)
+    return policy, critic, obs_dim, action_dim, n_agents
 
-        self._placeholder_mask = np.zeros(self.action_dim, dtype=np.float32)
-        self._placeholder_mask[0] = 1.0  # explore-only -> always finite
-        self._cur = [None] * self.num_envs   # name -> obs dict (alive only)
-        self._ep_len = [0] * self.num_envs
-
-    def _flat_obs(self, o):
-        return np.concatenate([o["map"].ravel(), o["self"]]).astype(np.float32)
-
-    def _batch(self):
-        obs = np.zeros((self.num_envs, self.N, self.obs_dim), dtype=np.float32)
-        mask = np.zeros((self.num_envs, self.N, self.action_dim), dtype=np.float32)
-        state = np.zeros((self.num_envs, self.state_dim), dtype=np.float32)
-        active = np.zeros((self.num_envs, self.N), dtype=np.float32)
-        for i, e in enumerate(self.envs):
-            state[i] = e.state().astype(np.float32)
-            for name, slot in self._slot.items():
-                o = self._cur[i].get(name)
-                if o is None:
-                    mask[i, slot] = self._placeholder_mask
-                else:
-                    obs[i, slot] = self._flat_obs(o)
-                    mask[i, slot] = o["action_mask"].astype(np.float32)
-                    active[i, slot] = 1.0
-        return obs, mask, state, active
-
-    def reset(self, seed=None):
-        for i, e in enumerate(self.envs):
-            s = None if seed is None else seed + i
-            o, _ = e.reset(seed=s)
-            self._cur[i] = dict(o)
-            self._ep_len[i] = 0
-        obs, mask, state, active = self._batch()
-        return obs, mask, state, active
-
-    def step(self, actions):
-        rewards = np.zeros((self.num_envs, self.N), dtype=np.float32)
-        dones = np.zeros((self.num_envs, self.N), dtype=np.float32)
-        infos = [dict() for _ in range(self.num_envs)]
-        for i, e in enumerate(self.envs):
-            alive = list(e.agents)
-            act = {n: int(actions[i, self._slot[n]]) for n in alive}
-            obs, rew, term, trunc, _ = e.step(act)
-            self._ep_len[i] += 1
-            for n in rew:
-                slot = self._slot[n]
-                rewards[i, slot] = rew[n]
-                dones[i, slot] = float(term[n] or trunc[n])
-            if len(e.agents) == 0:
-                survivors = sum(1 for c in e.civs.values() if c.alive)
-                infos[i] = {"episode_end": True,
-                            "survivors": survivors,
-                            "annihilation": survivors <= 1,
-                            "length": self._ep_len[i]}
-                o2, _ = e.reset()
-                self._cur[i] = dict(o2)
-                self._ep_len[i] = 0
-            else:
-                self._cur[i] = {n: obs[n] for n in e.agents}
-        nobs, nmask, nstate, nactive = self._batch()
-        return nobs, nmask, nstate, rewards, dones, nactive, infos
+# --------------------------------------------------------------------------- #
+# render recording: expose planets / civilizations / actions per step
+# --------------------------------------------------------------------------- #
+ACTION_TYPE_NAMES = ("colonize_empty", "destroy_planet", "colonize_inhabited")
 
 
-def make_env_fn(args, idx):
-    def thunk():
-        return DarkForestParallelEnv(
-            names=args.names, width=args.width, height=args.height,
-            initial_planets=args.initial_planets, max_steps=args.max_steps,
-            harvest_rate=args.harvest_rate,
-            initial_resources=args.initial_resources,
-            initial_population=args.initial_population,
-            reward_weights=args.reward_weights or None,
-        )
-    return thunk
+def decode_action(env: DarkForestParallelEnv, action: int):
+    """Turn a flat action index into a renderable description."""
+    if action == A_EXPLORE:
+        return {"id": int(action), "type": "explore", "target": None}
+    if action == A_BIRTH:
+        return {"id": int(action), "type": "increase_birth_rate", "target": None}
+    if action == A_BROADCAST:
+        return {"id": int(action), "type": "broadcast", "target": None}
+    t = action - N_NONTARGETED
+    ttype, cidx = divmod(t, env.n_cells)
+    coord = (cidx // env.width, cidx % env.width)
+    return {"id": int(action),
+            "type": ACTION_TYPE_NAMES[int(ttype)],
+            "target": [int(coord[0]), int(coord[1])]}
 
 
-class DarkForestStopper:
-    def __init__(self, args):
-        self.mode = args.stop_mode
-        self.min_iters = args.min_iters
-        self.sil_thr = args.silence_threshold
-        self.sil_patience = args.silence_patience
-        self.peak_thr = args.broadcast_peak_threshold
-        self.rel_drop = args.silence_rel_drop
-        self.ann_thr = args.annihilation_threshold
-        self.beta = args.ema_beta
-        self.ema = None
-        self.peak = 0.0
-        self.silent_streak = 0
-        self.recent_ann = deque(maxlen=50)
+def snapshot_planets(env: DarkForestParallelEnv):
+    return [
+        {
+            "coord": [int(p.coord[0]), int(p.coord[1])],
+            "resources": float(p.resources),
+            "owner": p.civilization.name if p.civilization is not None else None,
+            "destroyed": bool(p.destroyed),
+        }
+        for p in env.planets
+    ]
 
-    def update(self, it, broadcast_rate, episode_infos):
-        self.ema = (broadcast_rate if self.ema is None
-                    else self.beta * self.ema + (1 - self.beta) * broadcast_rate)
-        self.peak = max(self.peak, self.ema)
-        collapsed = self.peak >= self.peak_thr and self.ema <= self.rel_drop * self.peak
-        silent_now = (self.ema < self.sil_thr) or collapsed
-        self.silent_streak = self.silent_streak + 1 if silent_now else 0
-        for info in episode_infos:
-            if info.get("episode_end"):
-                self.recent_ann.append(1.0 if info["annihilation"] else 0.0)
 
-        if self.mode == "off" or it < self.min_iters:
-            return None
+def snapshot_civilizations(env: DarkForestParallelEnv):
+    out = []
+    for name in env.possible_agents:
+        civ = env.civs[name]
+        out.append({
+            "name": name,
+            "alive": bool(civ.alive),
+            "home_coord": [int(civ.coord[0]), int(civ.coord[1])],
+            "population": float(civ.population),
+            "science": float(civ.science),
+            "resources": float(civ.resources),
+            "birth_rate": float(civ.birth_rate),
+            "death_rate": float(civ.death_rate),
+            "population_consumption": float(civ.population_consumption),
+            "harvest_rate": float(civ.harvest_rate),
+            "strength": float(civ.strength),
+            "exploration_radius": int(civ.exploration_radius),
+            "owned_planets": [[int(p.coord[0]), int(p.coord[1])]
+                              for p in env.planets if p.civilization is civ],
+            "known_civilizations": [c.name for c in civ.known_civilizations],
+            "explored_cells": sorted([int(r), int(c)]
+                                     for (r, c) in civ.explored_cells),
+        })
+    return out
 
-        silence = (self.peak >= self.peak_thr
-                   and self.silent_streak >= self.sil_patience)
-        ann_rate = np.mean(self.recent_ann) if self.recent_ann else 0.0
-        extermination = (len(self.recent_ann) >= self.recent_ann.maxlen
-                         and ann_rate >= self.ann_thr)
 
-        if self.mode == "silence" and silence:
-            return (f"broadcast silence (EMA={self.ema:.4f} for "
-                    f"{self.silent_streak} iters; peaked at {self.peak:.3f})")
-        if self.mode == "extermination" and extermination:
-            return f"extermination ({ann_rate:.0%} of recent episodes annihilated)"
-        if self.mode == "either" and (silence or extermination):
-            return ("broadcast silence" if silence
-                    else f"extermination ({ann_rate:.0%})")
-        return None
+def _policy_actions(policy, env, obs, device, deterministic, action_dim):
+    """Run the trained policy on raw PettingZoo observations."""
+    names = env.possible_agents
+    n = len(names)
+    c_, h_, w_ = next(iter(obs.values()))["map"].shape if obs else (0, 0, 0)
+    maps = torch.zeros((n, c_, h_, w_), dtype=torch.float32)
+    selfs = torch.zeros((n, 8), dtype=torch.float32)
+    masks = torch.zeros((n, action_dim), dtype=torch.bool)
+    masks[:, A_EXPLORE] = True  # placeholder for dead agents
+    for i, name in enumerate(names):
+        o = obs.get(name)
+        if o is None:
+            continue
+        maps[i] = torch.as_tensor(o["map"])
+        selfs[i] = torch.as_tensor(o["self"])
+        masks[i] = torch.as_tensor(o["action_mask"]).bool()
+    td = TensorDict(
+        {GROUP: TensorDict(
+            {"observation": TensorDict({"map": maps, "self": selfs}, [n]),
+             "action_mask": masks},
+            batch_size=[n])},
+        batch_size=[],
+    ).to(device)
+    mode = (ExplorationType.DETERMINISTIC if deterministic
+            else ExplorationType.RANDOM)
+    with torch.no_grad(), set_exploration_type(mode):
+        td = policy(td)
+    acts = td[GROUP, "action"].cpu().numpy()
+    return {name: int(acts[i]) for i, name in enumerate(names)}
 
-class PPOTrainer:
-    """Steppable PPO loop. Same math/order as the original monolithic main(),
-    just split so a rollout step can be driven (and visualized) one at a time."""
 
-    def __init__(self, args):
-        self.args = args
-        random_seed(args.seed, args.torch_deterministic)
+def record_episode(policy, args, device, action_dim, out_path,
+                   seed=None, deterministic=False):
+    """Play one episode with the current policy on a fresh env and dump a
+    JSON file with everything a renderer needs: per-step planets,
+    civilizations (full attributes) and the decoded action of each civ."""
+    env = make_base_env(args)
+    obs, _ = env.reset(seed=seed)
 
-        self.vec = MAVecEnv([make_env_fn(args, i) for i in range(args.num_envs)])
-        vec = self.vec
-        self.N, self.E = vec.N, vec.num_envs
-        self.batch = self.E * self.N
-        N, E, batch = self.N, self.E, self.batch
+    frames = [{
+        "step": 0,
+        "actions": {},
+        "rewards": {},
+        "planets": snapshot_planets(env),
+        "civilizations": snapshot_civilizations(env),
+    }]
+    step = 0
+    while env.agents:
+        all_actions = _policy_actions(policy, env, obs, device,
+                                      deterministic, action_dim)
+        acting = {n: all_actions[n] for n in env.agents}
+        obs, rewards, terms, truncs, _ = env.step(acting)
+        step += 1
+        frames.append({
+            "step": step,
+            "actions": {n: decode_action(env, a) for n, a in acting.items()},
+            "rewards": {n: float(r) for n, r in rewards.items()},
+            "terminations": {n: bool(t) for n, t in terms.items()},
+            "truncations": {n: bool(t) for n, t in truncs.items()},
+            "planets": snapshot_planets(env),
+            "civilizations": snapshot_civilizations(env),
+        })
 
-        self.agent = Agent(vec.obs_dim, vec.action_dim, vec.state_dim, N,
-                           args.critic, args.hidden_dim)
-        self.optimizer = optim.Adam(self.agent.parameters(),
-                                    lr=args.learning_rate, eps=1e-5)
-
-        self.onehot_all = torch.zeros(batch, N)
-        for i in range(E):
-            for a in range(N):
-                self.onehot_all[i * N + a, a] = 1.0
-
-        T = self.T = args.num_steps
-        self.obs_b = torch.zeros((T, batch, vec.obs_dim))
-        self.mask_b = torch.zeros((T, batch, vec.action_dim))
-        self.state_b = torch.zeros((T, batch, vec.state_dim))
-        self.act_b = torch.zeros((T, batch), dtype=torch.long)
-        self.logp_b = torch.zeros((T, batch))
-        self.val_b = torch.zeros((T, batch))
-        self.rew_b = torch.zeros((T, batch))
-        self.done_b = torch.zeros((T, batch))
-        self.active_b = torch.zeros((T, batch))
-
-        obs_np, mask_np, state_np, active_np = vec.reset(seed=args.seed)
-        self.active_np = active_np
-        self.next_obs = torch.tensor(self._to_rows(obs_np))
-        self.next_mask = torch.tensor(self._to_rows(mask_np))
-        self.next_state = torch.tensor(np.repeat(state_np, N, axis=0))
-        self.next_done = torch.zeros(batch)
-        self.next_active = torch.tensor(active_np.reshape(batch))
-
-        self.stopper = DarkForestStopper(args)
-        self.ep_return = np.zeros(batch, dtype=np.float64)
-        self.return_hist = deque(maxlen=100)
-        self.surv_hist = deque(maxlen=100)
-        self.global_step = 0
-        self.num_iters = args.total_timesteps // args.batch_size
-        self.start = time.time()
-        self.stop_reason = None
-        self.it = 0
-        self._n_broadcast = self._n_active = 0.0
-        self._ep_infos = []
-
-    def _to_rows(self, arr):  # (E, N, ...) -> (E*N, ...)
-        return arr.reshape(self.batch, *arr.shape[2:])
-
-    def rollout_step(self, step):
-        """One env step; fills buffers[step]. Returns the per-env infos."""
-        self.global_step += self.E
-        self.obs_b[step] = self.next_obs
-        self.mask_b[step] = self.next_mask
-        self.state_b[step] = self.next_state
-        self.done_b[step] = self.next_done
-        self.active_b[step] = self.next_active
-
-        with torch.no_grad():
-            action, logp, _, value = self.agent.get_action_and_value(
-                self.next_obs, self.next_mask, self.next_state, self.onehot_all)
-        self.val_b[step] = value
-        self.act_b[step] = action
-        self.logp_b[step] = logp
-
-        act_np = action.cpu().numpy().reshape(self.E, self.N)
-        self._n_broadcast += float(((act_np == A_BROADCAST) & (self.active_np > 0)).sum())
-        self._n_active += float(self.active_np.sum())
-
-        obs_np, mask_np, state_np, rew_np, done_np, active_np, infos = self.vec.step(act_np)
-        self.active_np = active_np
-        self.rew_b[step] = torch.tensor(rew_np.reshape(self.batch))
-
-        self.ep_return += rew_np.reshape(self.batch)
-        done_flat = done_np.reshape(self.batch)
-        for r in range(self.batch):
-            if done_flat[r] > 0:
-                self.return_hist.append(self.ep_return[r])
-                self.ep_return[r] = 0.0
-        for info in infos:
-            if info.get("episode_end"):
-                self.surv_hist.append(info["survivors"])
-                self._ep_infos.append(info)
-
-        self.next_obs = torch.tensor(self._to_rows(obs_np))
-        self.next_mask = torch.tensor(self._to_rows(mask_np))
-        self.next_state = torch.tensor(np.repeat(state_np, self.N, axis=0))
-        self.next_done = torch.tensor(done_flat, dtype=torch.float32)
-        self.next_active = torch.tensor(active_np.reshape(self.batch))
-        return infos
-
-    def _optimize(self):
-        """GAE + PPO update over the collected rollout.
-        Returns the last v_loss, or None if there were no live rows."""
-        args, T, batch = self.args, self.T, self.batch
-        with torch.no_grad():
-            next_value = self.agent.get_value(self.next_obs, self.next_state, self.onehot_all).squeeze(-1)
-            adv = torch.zeros_like(self.rew_b)
-            lastgae = torch.zeros(batch)
-            for t in reversed(range(T)):
-                if t == T - 1:
-                    nonterminal = 1.0 - self.next_done
-                    nextval = next_value
-                else:
-                    nonterminal = 1.0 - self.done_b[t + 1]
-                    nextval = self.val_b[t + 1]
-                delta = self.rew_b[t] + args.gamma * nextval * nonterminal - self.val_b[t]
-                adv[t] = lastgae = delta + args.gamma * args.gae_lambda * nonterminal * lastgae
-            returns = adv + self.val_b
-
-        b_obs = self.obs_b.reshape(-1, self.vec.obs_dim)
-        b_mask = self.mask_b.reshape(-1, self.vec.action_dim)
-        b_state = self.state_b.reshape(-1, self.vec.state_dim)
-        b_onehot = self.onehot_all.repeat(T, 1)
-        b_act = self.act_b.reshape(-1)
-        b_logp = self.logp_b.reshape(-1)
-        b_val = self.val_b.reshape(-1)
-        b_adv = adv.reshape(-1)
-        b_ret = returns.reshape(-1)
-        b_active = self.active_b.reshape(-1)
-
-        live_idx = torch.nonzero(b_active > 0, as_tuple=False).squeeze(-1)
-        if live_idx.numel() == 0:
-            return None
-        mb_size = max(1, live_idx.numel() // args.num_minibatches)
-
-        approx_kl = torch.tensor(0.0)
-        v_loss = torch.tensor(0.0)
-        for _ in range(args.update_epochs):
-            perm = live_idx[torch.randperm(live_idx.numel())]
-            for s in range(0, perm.numel(), mb_size):
-                mb = perm[s:s + mb_size]
-                _, newlogp, entropy, newval = self.agent.get_action_and_value(
-                    b_obs[mb], b_mask[mb], b_state[mb], b_onehot[mb], b_act[mb])
-                logratio = newlogp - b_logp[mb]
-                ratio = logratio.exp()
-                with torch.no_grad():
-                    approx_kl = ((ratio - 1) - logratio).mean()
-
-                mb_adv = b_adv[mb]
-                if args.norm_adv and mb_adv.numel() > 1:
-                    mb_adv = (mb_adv - mb_adv.mean()) / (mb_adv.std() + 1e-8)
-
-                pg1 = -mb_adv * ratio
-                pg2 = -mb_adv * torch.clamp(ratio, 1 - args.clip_coef, 1 + args.clip_coef)
-                pg_loss = torch.max(pg1, pg2).mean()
-
-                if args.clip_vloss:
-                    v_unclipped = (newval - b_ret[mb]) ** 2
-                    v_clipped = b_val[mb] + torch.clamp(
-                        newval - b_val[mb], -args.clip_coef, args.clip_coef)
-                    v_clipped = (v_clipped - b_ret[mb]) ** 2
-                    v_loss = 0.5 * torch.max(v_unclipped, v_clipped).mean()
-                else:
-                    v_loss = 0.5 * ((newval - b_ret[mb]) ** 2).mean()
-
-                ent_loss = entropy.mean()
-                loss = pg_loss - args.ent_coef * ent_loss + args.vf_coef * v_loss
-
-                self.optimizer.zero_grad()
-                loss.backward()
-                nn.utils.clip_grad_norm_(self.agent.parameters(), args.max_grad_norm)
-                self.optimizer.step()
-
-            if args.target_kl is not None and approx_kl > args.target_kl:
-                break
-        return v_loss
-
-    def train_iteration(self):
-        """One full PPO iteration (T rollout steps + one update).
-        Returns a metrics dict, or None if the update was skipped."""
-        args = self.args
-        self.it += 1
-        if args.anneal_lr:
-            self.optimizer.param_groups[0]["lr"] = (1 - (self.it - 1) / self.num_iters) * args.learning_rate
-
-        self._n_broadcast = 0.0
-        self._n_active = 0.0
-        self._ep_infos = []
-
-        for step in range(self.T):
-            self.rollout_step(step)
-
-        v_loss = self._optimize()
-        if v_loss is None:            # no live rows -> matches original `continue`
-            return None
-
-        broadcast_rate = (self._n_broadcast / self._n_active) if self._n_active > 0 else 0.0
-        mean_ret = float(np.mean(self.return_hist)) if self.return_hist else float("nan")
-        mean_surv = float(np.mean(self.surv_hist)) if self.surv_hist else float("nan")
-        sps = int(self.global_step / (time.time() - self.start))
-
-        if self.it % 5 == 0 or self.it == 1:
-            print(f"[iter {self.it:4d}/{self.num_iters}] step={self.global_step} "
-                  f"broadcast_rate={broadcast_rate:.4f} ema={self.stopper.ema or 0:.4f} "
-                  f"ep_ret={mean_ret:.2f} survivors={mean_surv:.2f} "
-                  f"value_loss={float(v_loss):.3f} SPS={sps}")
-
-        self.stop_reason = self.stopper.update(self.it, broadcast_rate, self._ep_infos)
-        if self.stop_reason:
-            print(f"\n[STOP @ iter {self.it}] dark-forest criterion met: {self.stop_reason}")
-        return {"broadcast_rate": broadcast_rate, "mean_ret": mean_ret,
-                "mean_surv": mean_surv, "v_loss": float(v_loss),
-                "stop_reason": self.stop_reason}
-
-    def run(self, run_name):
-        """Full training run + checkpoint (reproduces the original main())."""
-        for _ in range(self.num_iters):
-            self.train_iteration()
-            if self.stop_reason:
-                break
-
-        os.makedirs("runs", exist_ok=True)
-        ckpt = f"runs/{run_name}.pt"
-        torch.save({"agent": self.agent.state_dict(), "args": vars(self.args),
-                    "stopped": self.stop_reason, "global_step": self.global_step}, ckpt)
-        print(f"[done] saved {ckpt} after {self.global_step} steps "
-              f"({'stopped: ' + self.stop_reason if self.stop_reason else 'reached total-timesteps'})")
-        vec_close(self.vec)
-
+    survivors = sum(1 for c in env.civs.values() if c.alive)
+    data = {
+        "meta": {
+            "width": env.width,
+            "height": env.height,
+            "names": list(env.possible_agents),
+            "max_steps": env.max_steps,
+            "episode_length": step,
+            "survivors": survivors,
+            "annihilation": survivors <= 1,
+            "seed": seed,
+            "deterministic": deterministic,
+        },
+        "frames": frames,
+    }
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    with open(out_path, "w") as f:
+        json.dump(data, f)
+    env.close()
+    return data["meta"]
 
 def main():
     args = parse_args()
@@ -515,27 +350,199 @@ def main():
     for kv in args.reward:
         k, v = kv.split("=")
         args.reward_weights[k.strip()] = float(v)
-    args.batch_size = args.num_envs * args.num_steps
-    run_name = args.run_name or f"darkforest_{args.critic}_{int(time.time())}"
 
-    print(f"[setup] run={run_name} critic={args.critic} "
-          f"stop-mode={args.stop_mode}")
+    if args.device == "auto":
+        args.device = "cuda" if torch.cuda.is_available() else "cpu"
+    device = torch.device(args.device)
 
-    trainer = PPOTrainer(args)
-    trainer.run(run_name)
+    run_name = args.run_name or f"darkforest_torchrl_{args.critic}_{int(time.time())}"
+    run_dir = os.path.join("runs", run_name)
+    os.makedirs(run_dir, exist_ok=True)
 
-
-def vec_close(vec):
-    for e in vec.envs:
-        e.close()
-
-
-def random_seed(seed, deterministic):
     import random
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.backends.cudnn.deterministic = deterministic
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
+    torch.backends.cudnn.deterministic = args.torch_deterministic
+
+    frames_per_batch = args.num_envs * args.num_steps
+    num_iters = max(1, args.total_timesteps // frames_per_batch)
+    minibatch_size = max(1, frames_per_batch // args.num_minibatches)
+
+    env = make_torchrl_env(args, device)
+    env.set_seed(args.seed)
+    policy, critic, obs_dim, action_dim, n_agents = build_models(args, env, device)
+
+    print(f"[setup] run={run_name} critic={args.critic} device={device} "
+          f"n_agents={n_agents} obs_dim={obs_dim} action_dim={action_dim} "
+          f"iters={num_iters} stop-mode={args.stop_mode}")
+
+    collector = SyncDataCollector(
+        env,
+        policy,
+        device=device,
+        frames_per_batch=frames_per_batch,
+        total_frames=num_iters * frames_per_batch,
+    )
+
+    replay_buffer = ReplayBuffer(
+        storage=LazyTensorStorage(frames_per_batch, device=device),
+        sampler=SamplerWithoutReplacement(),
+        batch_size=minibatch_size,
+    )
+
+    loss_module = ClipPPOLoss(
+        actor_network=policy,
+        critic_network=critic,
+        clip_epsilon=args.clip_coef,
+        entropy_bonus=args.ent_coef > 0,
+        entropy_coeff=args.ent_coef,
+        critic_coeff=args.vf_coef,
+        normalize_advantage=args.norm_adv,
+        clip_value=args.clip_coef,        # value clipping like cleanRL
+    )
+    loss_module.set_keys(
+        reward=(GROUP, "reward"),
+        action=(GROUP, "action"),
+        sample_log_prob=(GROUP, "sample_log_prob"),
+        value=(GROUP, "state_value"),
+        done=(GROUP, "done"),
+        terminated=(GROUP, "terminated"),
+        advantage=(GROUP, "advantage"),
+        value_target=(GROUP, "value_target"),
+    )
+    loss_module.make_value_estimator(
+        ValueEstimators.GAE, gamma=args.gamma, lmbda=args.gae_lambda)
+
+    optimizer = torch.optim.Adam(loss_module.parameters(),
+                                 lr=args.learning_rate, eps=1e-5)
+
+    stopper = DarkForestStopper(args)
+    return_hist = deque(maxlen=100)
+    surv_hist = deque(maxlen=100)
+    global_step = 0
+    start = time.time()
+    stop_reason = None
+
+    for it, data in enumerate(collector, start=1):
+        global_step += data.numel()
+
+        if args.anneal_lr:
+            frac = 1.0 - (it - 1) / num_iters
+            optimizer.param_groups[0]["lr"] = frac * args.learning_rate
+
+        alive_mask = data[GROUP, "mask"]                      # [E, T, N]
+        actions = data[GROUP, "action"]
+        n_active = alive_mask.sum().item()
+        n_broadcast = ((actions == A_BROADCAST) & alive_mask).sum().item()
+        broadcast_rate = n_broadcast / n_active if n_active > 0 else 0.0
+
+        # episode bookkeeping (returns / survivors / annihilation)
+        annihilations = []
+        done_root = data["next", "done"].squeeze(-1)          # [E, T]
+        if done_root.any():
+            ep_rew = data["next", GROUP, "episode_reward"].squeeze(-1)  # [E,T,N]
+            next_pop = data["next", GROUP, "observation", "self"][..., 0]
+            next_mask = data["next", GROUP, "mask"]
+            idx = done_root.nonzero(as_tuple=False)
+            for e, t in idx.tolist():
+                return_hist.append(float(ep_rew[e, t].mean()))
+                survivors = int(((next_pop[e, t] > 0) & next_mask[e, t]).sum())
+                surv_hist.append(survivors)
+                annihilations.append(1.0 if survivors <= 1 else 0.0)
+
+        # GAE on the time-structured batch
+        with torch.no_grad():
+            loss_module.value_estimator(
+                data,
+                params=loss_module.critic_network_params,
+                target_params=loss_module.target_critic_network_params,
+            )
+        # dead/padded agents must not contribute to the policy gradient
+        adv = data[GROUP, "advantage"]
+        adv = adv * alive_mask.unsqueeze(-1).to(adv.dtype)
+        data.set((GROUP, "advantage"), adv)
+
+        replay_buffer.empty()
+        replay_buffer.extend(data.reshape(-1))
+
+        last_losses = {}
+        approx_kl = None
+        for _ in range(args.update_epochs):
+            for _ in range(frames_per_batch // minibatch_size):
+                sample = replay_buffer.sample()
+                loss_vals = loss_module(sample)
+                loss = (loss_vals["loss_objective"]
+                        + loss_vals["loss_critic"]
+                        + loss_vals.get("loss_entropy", 0.0))
+                optimizer.zero_grad()
+                loss.backward()
+                nn.utils.clip_grad_norm_(loss_module.parameters(),
+                                         args.max_grad_norm)
+                optimizer.step()
+                last_losses = {k: float(v.detach())
+                               for k, v in loss_vals.items()
+                               if k.startswith("loss") or k == "kl_approx"}
+                if "kl_approx" in loss_vals.keys():
+                    approx_kl = float(loss_vals["kl_approx"].detach())
+            if (args.target_kl is not None and approx_kl is not None
+                    and approx_kl > args.target_kl):
+                break
+        return v_loss
+
+        mean_ret = float(np.mean(return_hist)) if return_hist else float("nan")
+        mean_surv = float(np.mean(surv_hist)) if surv_hist else float("nan")
+        sps = int(global_step / (time.time() - start))
+
+        if it % 5 == 0 or it == 1:
+            print(f"[iter {it:4d}/{num_iters}] step={global_step} "
+                  f"broadcast_rate={broadcast_rate:.4f} "
+                  f"ema={stopper.ema or 0:.4f} "
+                  f"ep_ret={mean_ret:.2f} survivors={mean_surv:.2f} "
+                  f"v_loss={last_losses.get('loss_critic', float('nan')):.3f} "
+                  f"SPS={sps}")
+
+        if args.record_every and it % args.record_every == 0:
+            path = os.path.join(run_dir, "render", f"iter_{it:05d}.json")
+            meta = record_episode(policy, args, device, action_dim, path,
+                                  seed=args.seed + it,
+                                  deterministic=args.record_deterministic)
+            print(f"   [render] {path} length={meta['episode_length']} "
+                  f"survivors={meta['survivors']}")
+
+        stop_reason = stopper.update(it, broadcast_rate, annihilations)
+        if stop_reason:
+            print(f"\n[STOP @ iter {it}] dark-forest criterion met: {stop_reason}")
+            break
+
+    collector.shutdown()
+
+    # checkpoint
+    ckpt = os.path.join(run_dir, "checkpoint.pt")
+    torch.save({
+        "policy": policy.state_dict(),
+        "critic": critic.state_dict(),
+        "args": vars(args),
+        "stopped": stop_reason,
+        "global_step": global_step,
+    }, ckpt)
+    print(f"[done] saved {ckpt} after {global_step} steps "
+          f"({'stopped: ' + stop_reason if stop_reason else 'reached total-timesteps'})")
+
+    # final render recordings (for the visualizer)
+    for ep in range(args.record_episodes):
+        path = os.path.join(run_dir, "render", f"final_ep{ep:02d}.json")
+        meta = record_episode(policy, args, device, action_dim, path,
+                              seed=args.seed + 10_000 + ep,
+                              deterministic=args.record_deterministic)
+        print(f"[render] {path} length={meta['episode_length']} "
+              f"survivors={meta['survivors']} "
+              f"annihilation={meta['annihilation']}")
+
+    try:
+        env.close()
+    except RuntimeError:
+        pass  # the collector may already have closed the env
 
 
 if __name__ == "__main__":
