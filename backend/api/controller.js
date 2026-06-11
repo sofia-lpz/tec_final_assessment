@@ -37,6 +37,17 @@ export const login = async (req, res) => {
     }
 };
 
+export const register = async (req, res) => {
+    try {
+        const { username, password} = req.body;
+        const role = 'user'
+        const userId = await Service.createUser(username, password, role);
+        res.json({ id: userId, username, role });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
+
 export const logout = async (req, res) => {
     try {
         await Service.incrementTokenVersion(req.userId);
