@@ -9,6 +9,15 @@ export const login = async (username, password) => {
     }
 };
 
+export const incrementTokenVersion = async (id) => {
+    try {
+        const result = await db.incrementTokenVersion(Number(id));
+        return result;
+    } catch (error) {
+        throw error;
+    }
+}
+
 //Users
 export const getUsers = async (req) => {
     try {
