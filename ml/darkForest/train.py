@@ -270,6 +270,64 @@ def record_episode(policy, args, device, action_dim, out_path,
     env.close()
     return data["meta"]
 
+def record_episode_stream(policy, args, device, action_dim,
+                          on_step, seed=None, deterministic=False):
+    """
+    Like record_episode but streams frames live via on_step(frame) instead of
+    accumulating them.  on_step receives the same dict that record_episode puts
+    in frames[], plus a "meta" key on the final frame once the episode ends.
+
+    Returns the episode meta dict (same as record_episode).
+    """
+    env = make_base_env(args)
+    obs, _ = env.reset(seed=seed)
+
+    # Step 0 – initial board state before any action
+    on_step({
+        "step": 0,
+        "actions": {},
+        "rewards": {},
+        "terminations": {},
+        "truncations": {},
+        "planets": snapshot_planets(env),
+        "civilizations": snapshot_civilizations(env),
+        "episode_done": False,
+    })
+
+    step = 0
+    while env.agents:
+        all_actions = _policy_actions(policy, env, obs, device,
+                                      deterministic, action_dim)
+        acting = {n: all_actions[n] for n in env.agents}
+        obs, rewards, terms, truncs, _ = env.step(acting)
+        step += 1
+        on_step({
+            "step": step,
+            "actions": {n: decode_action(env, a) for n, a in acting.items()},
+            "rewards": {n: float(r) for n, r in rewards.items()},
+            "terminations": {n: bool(t) for n, t in terms.items()},
+            "truncations": {n: bool(t) for n, t in truncs.items()},
+            "planets": snapshot_planets(env),
+            "civilizations": snapshot_civilizations(env),
+            "episode_done": not env.agents,
+        })
+
+    survivors = int((next_pop[e, t] > 0).sum())
+    meta = {
+        "width": env.width,
+        "height": env.height,
+        "names": list(env.possible_agents),
+        "max_steps": env.max_steps,
+        "episode_length": step,
+        "survivors": survivors,
+        "annihilation": survivors <= 1,
+        "seed": seed,
+        "deterministic": deterministic,
+    }
+    env.close()
+    return meta
+
+
 def main():
     args = get_config()
     device = torch.device(args.device)
@@ -402,7 +460,6 @@ def main():
             if (args.target_kl is not None and approx_kl is not None
                     and approx_kl > args.target_kl):
                 break
-        return v_loss
 
         mean_ret = float(np.mean(return_hist)) if return_hist else float("nan")
         mean_surv = float(np.mean(surv_hist)) if surv_hist else float("nan")
