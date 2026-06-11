@@ -1,3 +1,5 @@
+DROP DATABASE IF EXISTS `assessment`;
+
 CREATE DATABASE `assessment`;
 USE `assessment`;
 
