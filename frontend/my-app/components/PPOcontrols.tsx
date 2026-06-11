@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import LoadSimulationModal from "./MenuSimulation";
+import LoadSimulationModal from "./LoadSimulation";
+import SaveSimulationModal from "./SaveSimulation";
 
 type ConfigState = {
   ppo: { learningRate: number; gamma: number; critic: "IPPO" | "MAPPO" };
@@ -34,15 +35,21 @@ export default function PPOControls() {
 
   const [openSection, setOpenSection] = useState<"ppo" | "env" | "rewards" | "">("ppo");
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isSaveModalOpen, setIsSaveModalOpen] = useState(false);
 
   const handleApply = () => {
     console.log("Applying to simulation:", config);
   };
 
-  const handleSave = async () => {
-    // Lógica para enviar 'config' a /api/simulations/route.ts
-    console.log("Saving to DB:", config);
-    alert("Parámetros guardados (Simulado)");
+  const handleSaveClick = () => {
+    setIsSaveModalOpen(true);
+  };
+
+  const executeSave = async (name: string, configToSave: ConfigState) => {
+    // Aquí irá la lógica de fetch hacia tu backend (/api/simulations/route.ts)
+    // const payload = { userId: 1, name: name, config: configToSave };
+    console.log(`Guardando simulación '${name}' en BD con config:`, configToSave);
+    alert(`SIMULATION '${name}' SAVED SUCCESSFULLY`);
   };
 
   const handleLoadClick = () => {
@@ -176,7 +183,7 @@ export default function PPOControls() {
           </button>
           
           <div className="flex gap-3">
-            <button onClick={handleSave} className="flex-1 flex items-center justify-center gap-2 py-2 border border-white/40 hover:bg-white/10 transition-colors text-[9px] tracking-widest">
+            <button onClick={handleSaveClick} className="flex-1 flex items-center justify-center gap-2 py-2 border border-white/40 hover:bg-white/10 transition-colors text-[9px] tracking-widest">
               <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
               </svg>
@@ -198,6 +205,13 @@ export default function PPOControls() {
         onClose={() => setIsModalOpen(false)} 
         onLoad={applyLoadedConfig}
       />
+
+      <SaveSimulationModal
+        isOpen={isSaveModalOpen}
+        onClose={() => setIsSaveModalOpen(false)}
+        config={config}
+        onSave={executeSave}
+      />
     </>
   );
-}
+} 
