@@ -22,7 +22,7 @@ export const login = async (req, res) => {
         const { username, password } = req.body;
         const user = await Service.login(username, password);
         if (user) {
-            const token = jwt.sign({ id: user.id, username: user.username }, process.env.JWT_SECRET, { expiresIn: '1h' });
+            const token = jwt.sign({ id: user.id, username: user.username, tokenVersion: user.token_version }, process.env.JWT_SECRET, { expiresIn: '1h' });
             const role = user.role;
             res.send({ status: "OK", token, role });
             console.log(`User ${username} logged in`);
@@ -34,6 +34,26 @@ export const login = async (req, res) => {
             console.error(error);
             res.status(500).send({ status: "Error", message: "Internal Server Error" });
         }
+    }
+};
+
+export const register = async (req, res) => {
+    try {
+        const { username, password} = req.body;
+        const role = 'user'
+        const userId = await Service.createUser(username, password, role);
+        res.json({ id: userId, username, role });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
+
+export const logout = async (req, res) => {
+    try {
+        await Service.incrementTokenVersion(req.userId);
+        res.send({ status: "OK", message: "Logged out"});
+    } catch (error) {
+        res.status(500).send({ status: "Error", message: "Internal Server Error"});
     }
 };
 

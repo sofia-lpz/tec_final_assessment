@@ -6,6 +6,7 @@ CREATE TABLE users (
     username varchar(50) NOT NULL DEFAULT 'none',
     password varchar(255) NOT NULL,
     role enum('admin', 'user') NOT NULL DEFAULT 'user',
+    token_version int NOT NULL DEFAULT 0,
     PRIMARY KEY (id)
 );
 
