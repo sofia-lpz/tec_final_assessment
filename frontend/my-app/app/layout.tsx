@@ -18,6 +18,7 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Mi Proyecto 3D",
   description: "Simulación realizada por el equipo",
+  manifest: "/manifest.json",
 };
 
 export default function RootLayout({

@@ -1,21 +1,40 @@
 "use client";
 import { useState } from "react";
+import api from "../utils/dataProvider.js";
 
 export default function LoginPage() {
   const [user, setUser] = useState("");
   const [password, setPassword] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    
-    // DUMMY TEMPORAL ---
-    if (user === "admin" && password === "1234") {
-      // creamos una cookie de autenticación (simulada)
-      document.cookie = "authToken=token_dummy_12345; path=/; max-age=86400";
-      // redireccionamos a la simulación
-      window.location.href = "/simulation"; 
-    } else {
-      alert("Credenciales incorrectas (Usa: admin / 1234)");
+    setError(null);
+    setLoading(true);
+    try {
+      const data = await api.login(user, password);
+      if (data?.token) {
+        // Mirror token in a cookie so server components / middleware can read it.
+        // Use Secure in production (HTTPS) — drop it on localhost if needed.
+        const secure = window.location.protocol === "https:" ? "; Secure" : "";
+        document.cookie = `authToken=${data.token}; path=/; max-age=3600; SameSite=Lax${secure}`;
+        if (data.role) {
+          document.cookie = `authRole=${data.role}; path=/; max-age=3600; SameSite=Lax${secure}`;
+        }
+        window.location.href = "/simulation";
+      } else {
+        setError("Unexpected response from server");
+      }
+    } catch (err: unknown) {
+      const e = err as { status?: number; message?: string };
+      if (e.status === 401) {
+        setError("Invalid credentials");
+      } else {
+        setError(e.message || "Login failed");
+      }
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -27,8 +46,10 @@ export default function LoginPage() {
 
       {/* Formulario Glassmorphism */}
       <div className="w-full max-w-sm p-8 bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl z-10">
-        <h2 className="text-2xl font-light text-white text-center mb-8 tracking-[0.2em]">DARK FOREST</h2>
-        
+        <h2 className="text-2xl font-light text-white text-center mb-8 tracking-[0.2em]">
+          DARK FOREST
+        </h2>
+
         <form onSubmit={handleLogin} className="space-y-6">
           <div>
             <label className="block text-[10px] text-gray-400 tracking-widest mb-2">USER</label>
@@ -36,7 +57,8 @@ export default function LoginPage() {
               type="text"
               value={user}
               onChange={(e) => setUser(e.target.value)}
-              className="w-full bg-white/5 border border-white/10 p-3 text-white focus:outline-none focus:border-white transition-all"
+              disabled={loading}
+              className="w-full bg-white/5 border border-white/10 p-3 text-white focus:outline-none focus:border-white transition-all disabled:opacity-50"
               required
             />
           </div>
@@ -46,12 +68,24 @@ export default function LoginPage() {
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="w-full bg-white/5 border border-white/10 p-3 text-white focus:outline-none focus:border-white transition-all"
+              disabled={loading}
+              className="w-full bg-white/5 border border-white/10 p-3 text-white focus:outline-none focus:border-white transition-all disabled:opacity-50"
               required
             />
           </div>
-          <button type="submit" className="w-full py-3 border border-white text-white text-[10px] tracking-widest hover:bg-white hover:text-black transition-all duration-300">
-            ENTER
+
+          {error && (
+            <p className="text-[10px] tracking-widest text-red-400 text-center">
+              {error.toUpperCase()}
+            </p>
+          )}
+
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full py-3 border border-white text-white text-[10px] tracking-widest hover:bg-white hover:text-black transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {loading ? "..." : "ENTER"}
           </button>
         </form>
       </div>
