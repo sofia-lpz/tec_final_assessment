@@ -35,7 +35,7 @@ export async function incrementTokenVersion(userId) {
 export async function getUserByUsername(username) {
     const conn = await connectToDB();
     const [rows] = await conn.execute(
-        "SELECT id, username, role, password FROM users WHERE username = ?",
+        "SELECT id, username, role, password, token_version FROM users WHERE username = ?",
         [username]
     );
     conn.end();
