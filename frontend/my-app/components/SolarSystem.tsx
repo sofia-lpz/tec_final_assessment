@@ -20,7 +20,7 @@ import type { PlanetState } from "@/components/Planet";
 
 // ── Defaults ─────────────────────────────────────────────────
 const STAR_SCALE = 11;
-const CELL_SIZE = STAR_SCALE * 3;
+const CELL_SIZE = STAR_SCALE * 2;
 
 const DEFAULT_CELL_COLOR = "#1a2a3a";
 const PLANET_CELL_COLOR = "#4a6a8a";
