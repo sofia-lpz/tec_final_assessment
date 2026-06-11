@@ -21,8 +21,8 @@ _MAP_CHANNELS = (
 C = len(_MAP_CHANNELS)
 
 # Non-targeted actions
-A_EXPLORE, A_BIRTH, A_BROADCAST = 0, 1, 2
-N_NONTARGETED = 3
+A_EXPLORE, A_BROADCAST = 0, 1
+N_NONTARGETED = 2
 N_TARGETED_TYPES = 3  # colonize_empty, destroy, colonize_inhabited
 
 class DarkForestParallelEnv(ParallelEnv):
@@ -218,9 +218,6 @@ class DarkForestParallelEnv(ParallelEnv):
         if action == A_EXPLORE:
             rewards[civ.name] += w["explore"] * civ.explore()
             return
-        if action == A_BIRTH:
-            civ.increase_birth_rate()
-            return
         if action == A_BROADCAST:
             rewards[civ.name] += w["broadcast"] * civ.broadcast_position()
             return
@@ -283,8 +280,8 @@ class DarkForestParallelEnv(ParallelEnv):
 
     def _action_mask(self, civ):
         mask = np.zeros(self.action_dim, dtype=np.int8)
-        # the three non-targeted actions are always available
-        mask[A_EXPLORE] = mask[A_BIRTH] = mask[A_BROADCAST] = 1
+        # the two non-targeted actions are always available
+        mask[A_EXPLORE] = mask[A_BROADCAST] = 1
         n = self.n_cells
         for (r, c) in civ.explored_cells:
             p = self.planet_by_coord.get((r, c))

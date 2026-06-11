@@ -89,12 +89,8 @@ class Civilization:
         self.science += newly * SCIENCE_PER_EXPLORE
         return newly
 
-    def increase_birth_rate(self):
-        self.resources -= ADD_BIRTH_RATE_COST
-        self.birth_rate += BIRTH_RATE_STEP
-        return self.birth_rate
-
     def broadcast_position(self):
+        # TODO: maybe reward even when fc
         newly_reached = 0
         for civ in self._all_civilizations():
             if self not in civ.known_civilizations:
