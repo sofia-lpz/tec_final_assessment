@@ -1,14 +1,28 @@
 import jwt from 'jsonwebtoken';
 import * as Service from './service.js';
-import { response } from 'express';
+
+// Validation helper for Scenario required fields
+const validateScenarioData = (data) => {
+    const requiredFields = [
+        'name', 'broadcast_reward', 'destroyed_reward', 'conquer_reward',
+        'colonize_reward', 'survive_reward', 'population_reward', 'science_reward',
+        'explore_reward', 'invalid_reward', 'civilizations', 'map_width', 'map_height',
+        'planets', 'harvest_rate', 'initial_resources', 'initial_population', 'max_steps', 'critic'
+    ];
+
+    const missingFields = requiredFields.filter(field => !(field in data) || data[field] === undefined);
+    if (missingFields.length > 0) {
+        throw new Error(`Missing required fields: ${missingFields.join(', ')}`);
+    }
+    return data;
+};
 
 export const login = async (req, res) => {
     try {
         const { username, password } = req.body;
         const user = await Service.login(username, password);
         if (user) {
-            // Generate a JWT token
-            const token = jwt.sign({ id: user.id, username: user.username }, process.env.JWT_SECRET, { expiresIn: '1h' });
+            const token = jwt.sign({ id: user.id, username: user.username, tokenVersion: user.token_version }, process.env.JWT_SECRET, { expiresIn: '1h' });
             const role = user.role;
             res.send({ status: "OK", token, role });
             console.log(`User ${username} logged in`);
@@ -20,6 +34,26 @@ export const login = async (req, res) => {
             console.error(error);
             res.status(500).send({ status: "Error", message: "Internal Server Error" });
         }
+    }
+};
+
+export const register = async (req, res) => {
+    try {
+        const { username, password} = req.body;
+        const role = 'user'
+        const userId = await Service.createUser(username, password, role);
+        res.json({ id: userId, username, role });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
+
+export const logout = async (req, res) => {
+    try {
+        await Service.incrementTokenVersion(req.userId);
+        res.send({ status: "OK", message: "Logged out"});
+    } catch (error) {
+        res.status(500).send({ status: "Error", message: "Internal Server Error"});
     }
 };
 
@@ -47,7 +81,7 @@ export const getUsers = async (req, res) => {
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
-}
+};
 
 export const updateUser = async (req, res) => {
     try {
@@ -111,12 +145,18 @@ export const getOneUser = async (req, res) => {
 };
 
 //Scenarios
+
 export const createScenario = async (req, res) => {
     try {
-        const { name, description } = req.body;
-        const userId = req.userId; // From JWT token
-        const scenarioId = await Service.createScenario(name, description, userId);
-        res.json({ id: scenarioId, name, description, userId });
+        const scenarioData = req.body.scenario;
+        try {
+            validateScenarioData(scenarioData);
+        } catch (error) {
+            return res.status(400).json({ error: error.message });
+        }
+        const userId = req.userId;
+        const scenarioId = await Service.createScenario(scenarioData, userId);
+        res.json({ id: scenarioId, name: scenarioData.name, user_id: userId });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }

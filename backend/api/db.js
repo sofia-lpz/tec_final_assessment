@@ -22,10 +22,20 @@ export async function verifyPassword(username, password) {
     return user;
 }
 
+export async function incrementTokenVersion(userId) {
+    const conn = await connectToDB()
+    await conn.execute(
+        "UPDATE users SET token_version = token_version + 1 WHERE id = ?",
+        [userId]
+    );
+    conn.end()
+}
+
+//Users
 export async function getUserByUsername(username) {
     const conn = await connectToDB();
     const [rows] = await conn.execute(
-        "SELECT id, username, role FROM users WHERE username = ?",
+        "SELECT id, username, role, password, token_version FROM users WHERE username = ?",
         [username]
     );
     conn.end();
@@ -54,19 +64,18 @@ export async function getUsers(req) {
             filters.push("(username LIKE ? OR role LIKE ?)");
             params.push(searchValue, searchValue);
         }
-        
+
         for (const [key, value] of Object.entries(req.query)) {
             if (key !== "_sort" && key !== "_order" && key !== "_start" && key !== "_end" && key !== "id" && key !== "q") {
                 filters.push(`${connection.escapeId(key)} = ?`);
                 params.push(value);
             }
         }
-        
+
         if (filters.length > 0) {
             query += " WHERE " + filters.join(" AND ");
         }
 
-        // Sorting and pagination
         if ("_sort" in req.query) {
             let sortBy = req.query._sort;
             let sortOrder = req.query._order === "ASC" ? "ASC" : "DESC";
@@ -86,23 +95,22 @@ export async function getUsers(req) {
 }
 
 export async function updateUser(id, updateData) {
-    try{
-    const conn = await connectToDB();
+    try {
+        const conn = await connectToDB();
 
-    const keys = Object.keys(updateData);
-    const values = Object.values(updateData);
-    const setClause = keys.map(key => `${key} = ?`).join(', ');
-    
-    values.push(id);
-    const query = `UPDATE users SET ${setClause} WHERE id = ?`;
-    
-    await conn.execute(query, values);
-    
-    const [updatedRow] = await conn.execute("SELECT * FROM users WHERE id = ?", [id]);
-    conn.end();
-    return updatedRow[0];
-    }
-    catch (error) {
+        const keys = Object.keys(updateData);
+        const values = Object.values(updateData);
+        const setClause = keys.map(key => `${key} = ?`).join(', ');
+
+        values.push(id);
+        const query = `UPDATE users SET ${setClause} WHERE id = ?`;
+
+        await conn.execute(query, values);
+
+        const [updatedRow] = await conn.execute("SELECT id, username, role FROM users WHERE id = ?", [id]);
+        conn.end();
+        return updatedRow[0];
+    } catch (error) {
         throw error;
     }
 }
@@ -120,7 +128,7 @@ export async function deleteUser(id) {
 export async function getOneUser(id) {
     const conn = await connectToDB();
     const [rows] = await conn.execute(
-        "SELECT id, username, role FROM users WHERE id = ?",
+        "SELECT id, username, role, token_version FROM users WHERE id = ?",
         [id]
     );
     conn.end();
@@ -158,14 +166,12 @@ export async function countAdminUsers() {
     conn.end();
     return rows[0].count;
 }
-//users End
 
 //Scenarios
 export async function getScenarios(req) {
     try {
         const connection = await connectToDB();
-        // TODO: add the terms needed
-        let query = "SELECT id, name, userId FROM scenarios";
+        let query = "SELECT * FROM scenarios";
         let params = [];
 
         const filters = [];
@@ -181,8 +187,8 @@ export async function getScenarios(req) {
 
         if ("q" in req.query) {
             const searchValue = `%${req.query.q}%`;
-            filters.push("(name LIKE ? OR description LIKE ?)");
-            params.push(searchValue, searchValue);
+            filters.push("(name LIKE ?)");
+            params.push(searchValue);
         }
 
         for (const [key, value] of Object.entries(req.query)) {
@@ -217,23 +223,28 @@ export async function getScenarios(req) {
 export async function getScenariosByUser(userId) {
     const conn = await connectToDB();
     const [rows] = await conn.execute(
-        "SELECT id, name, description, userId FROM scenarios WHERE userId = ?",
+        "SELECT * FROM scenarios WHERE user_id = ?",
         [userId]
     );
     conn.end();
     return rows;
 }
 
-export async function createScenario(name, description, userId) {
-    if (!name || !description || !userId) {
-        throw new Error('Name, description, and userId are required');
+export async function createScenario(scenarioData) {
+    if (!scenarioData.name || !scenarioData.user_id) {
+        throw new Error('Name and user_id are required');
     }
-    
+
     const conn = await connectToDB();
     try {
+        const keys = Object.keys(scenarioData);
+        const values = Object.values(scenarioData);
+        const placeholders = keys.map(() => '?').join(', ');
+        const columnNames = keys.join(', ');
+
         const [result] = await conn.execute(
-            "INSERT INTO scenarios (name, description, userId) VALUES (?, ?, ?)",
-            [name, description, userId]
+            `INSERT INTO scenarios (${columnNames}) VALUES (${placeholders})`,
+            values
         );
         conn.end();
         return result.insertId;
@@ -243,20 +254,10 @@ export async function createScenario(name, description, userId) {
     }
 }
 
-export async function getOneScenario(id) {
-    const conn = await connectToDB();
-    const [rows] = await conn.execute(
-        "SELECT id, name, description, userId FROM scenarios WHERE id = ?",
-        [id]
-    );
-    conn.end();
-    return rows[0];
-}
-
 export async function getOneScenarioByUser(scenarioId, userId) {
     const conn = await connectToDB();
     const [rows] = await conn.execute(
-        "SELECT id, name, description, userId FROM scenarios WHERE id = ? AND userId = ?",
+        "SELECT * FROM scenarios WHERE id = ? AND user_id = ?",
         [scenarioId, userId]
     );
     conn.end();
@@ -270,17 +271,16 @@ export async function updateScenario(id, updateData) {
         const keys = Object.keys(updateData);
         const values = Object.values(updateData);
         const setClause = keys.map(key => `${key} = ?`).join(', ');
-        
+
         values.push(id);
         const query = `UPDATE scenarios SET ${setClause} WHERE id = ?`;
-        
+
         await conn.execute(query, values);
-        
+
         const [updatedRow] = await conn.execute("SELECT * FROM scenarios WHERE id = ?", [id]);
         conn.end();
         return updatedRow[0];
-    }
-    catch (error) {
+    } catch (error) {
         throw error;
     }
 }
