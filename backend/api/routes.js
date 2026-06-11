@@ -7,6 +7,7 @@ const router = express.Router();
 
 //login endpoint (no token required)
 router.post('/login', Controller.login);
+router.post('/logout', verifyToken, Controller.logout);
 
 //admin routes
 router.get('/usuarios', verifyToken, checkAdminRole, Controller.getUsers);

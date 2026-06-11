@@ -1,4 +1,5 @@
 import jwt from 'jsonwebtoken';
+import * as Service from '../service.js';
 
 const verifyToken = (req, res, next) => {
     const authHeader = req.headers['authorization'];
@@ -16,6 +17,11 @@ const verifyToken = (req, res, next) => {
         if (err) {
             console.log(err);
             return res.status(401).send({ status: "Error", message: "Failed to authenticate token" });
+        }
+
+        const user = await Service.getOneUser(decoded.id)
+        if (!user || user.token_version !== decoded.tokenVersion) {
+            return res.status(401).send({ message: "Token has been revoked"})
         }
         req.userId = decoded.id;
         next();

@@ -22,6 +22,15 @@ export async function verifyPassword(username, password) {
     return user;
 }
 
+export async function incrementTokenVersion(userId) {
+    const conn = await connectToDB()
+    await conn.execute(
+        "UPDATE users SET token_version = token_version + 1 WHERE id = ?"
+        [userId]
+    );
+    conn.end()
+}
+
 //Users
 export async function getUserByUsername(username) {
     const conn = await connectToDB();
