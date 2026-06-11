@@ -13,18 +13,21 @@ const verifyToken = (req, res, next) => {
         return res.status(403).send({ status: "Error", message: "Invalid token format" });
     }
 
-    jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
+    jwt.verify(token, process.env.JWT_SECRET, async (err, decoded) => {
         if (err) {
             console.log(err);
             return res.status(401).send({ status: "Error", message: "Failed to authenticate token" });
         }
-
-        const user = await Service.getOneUser(decoded.id)
-        if (!user || user.token_version !== decoded.tokenVersion) {
-            return res.status(401).send({ message: "Token has been revoked"})
+        try {
+            const user = await Service.getOneUser(decoded.id)
+            if (!user || user.token_version !== decoded.tokenVersion) {
+                return res.status(401).send({ message: "Token has been revoked"})
+            }
+            req.userId = decoded.id;
+            next();
+        } catch(error) {
+            return res.status(500).send({ status: "Error", message: "Internal Server Error" });
         }
-        req.userId = decoded.id;
-        next();
     });
 };
 
