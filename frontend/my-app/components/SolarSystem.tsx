@@ -18,26 +18,17 @@ import Planet from "@/components/Planet";
 import Star from "@/components/Star";
 import type { PlanetState } from "@/components/Planet";
 
-// ── Grid config ──────────────────────────────────────────────
+// ── Defaults ─────────────────────────────────────────────────
 const STAR_SCALE = 11;
 const CELL_SIZE = STAR_SCALE * 3;
-
-const GRID_X = 10;
-const GRID_Z = 10;
-const HALF_X = Math.floor(GRID_X / 2);
-const HALF_Z = Math.floor(GRID_Z / 2);
-const COLS = HALF_X * 2 + 1;
-const ROWS = HALF_Z * 2 + 1;
-const CENTER_COL = HALF_X;
-const CENTER_ROW = HALF_Z;
 
 const DEFAULT_CELL_COLOR = "#1a2a3a";
 const PLANET_CELL_COLOR = "#4a6a8a";
 
 // ── Planet definitions ───────────────────────────────────────
-type PlanetDef = {
+export type PlanetDef = {
   name: string;
-  grid: [number, number];
+  grid: [number, number]; // [col, row]
   scale?: number;
   state?: PlanetState;
   glowColor?: string;
@@ -45,28 +36,9 @@ type PlanetDef = {
   targetGrid?: [number, number];
 };
 
-const PLANETS: PlanetDef[] = [
-  { name: "neptune", grid: [2, 5], scale: 4, state: "none",        glowColor: "#037028", glowSize: 0.7 },
-  { name: "neptune", grid: [3, 5], scale: 4, state: "transmitting" },
-  { name: "neptune", grid: [4, 5], scale: 4, state: "birthplus",   glowColor: "#037028", glowSize: 0.7 },
-  { name: "neptune", grid: [6, 5], scale: 4, state: "scienceplus", glowColor: "#037028", glowSize: 0.7 },
-  { name: "neptune", grid: [7, 5], scale: 4, state: "none" },
-  { name: "neptune", grid: [8, 5], scale: 4, state: "destroy", targetGrid: [9, 5] },
-  { name: "neptune", grid: [9, 5], scale: 4, state: "none" },
-  { name: "neptune", grid: [0, 0], scale: 4, state: "transmitting" },
-];
-
-function gridToWorld(col: number, row: number): [number, number, number] {
-  return [(col - CENTER_COL) * CELL_SIZE, 0, (row - CENTER_ROW) * CELL_SIZE];
-}
 function gridKey(col: number, row: number) {
   return `${col},${row}`;
 }
-function cellIndex(col: number, row: number) {
-  return row * COLS + col;
-}
-
-const PLANET_CELLS = new Set(PLANETS.map((p) => gridKey(...p.grid)));
 
 // ── Grid cells: deduplicated edge lattice ────────────────────
 type GridCellsHandle = {
@@ -75,13 +47,35 @@ type GridCellsHandle = {
   resetAll: () => void;
 };
 
-const GridCells = forwardRef<GridCellsHandle>(function GridCells(_, ref) {
-  const { geometry, colorAttr, cellEdges } = useMemo(() => {
-    // Lattice corner -> world position
+type GridCellsProps = {
+  cols: number;
+  rows: number;
+  centerCol: number;
+  centerRow: number;
+  cellSize: number;
+  planetCells: Set<string>;
+};
+
+// Priority order for resolving shared-edge conflicts:
+//   civ color (custom) > planet color > default color
+// We encode priority as: 2 = civ, 1 = planet, 0 = default.
+// A shared edge is always rendered with the highest-priority
+// color among all cells that share it.
+
+const GridCells = forwardRef<GridCellsHandle, GridCellsProps>(function GridCells(
+  { cols, rows, centerCol, centerRow, cellSize, planetCells },
+  ref
+) {
+  const cellIndex = useCallback(
+    (col: number, row: number) => row * cols + col,
+    [cols]
+  );
+
+  const { geometry, colorAttr, cellEdges, edgeOwners } = useMemo(() => {
     const cornerPos = (i: number, j: number, k: number): [number, number, number] => [
-      (i - CENTER_COL - 0.5) * CELL_SIZE,
-      (j - 0.5) * CELL_SIZE,
-      (k - CENTER_ROW - 0.5) * CELL_SIZE,
+      (i - centerCol - 0.5) * cellSize,
+      (j - 0.5) * cellSize,
+      (k - centerRow - 0.5) * cellSize,
     ];
 
     const edgeMap = new Map<string, number>();
@@ -102,28 +96,35 @@ const GridCells = forwardRef<GridCellsHandle>(function GridCells(_, ref) {
       return idx;
     };
 
-    const cellEdges: number[][] = new Array(COLS * ROWS);
-    for (let row = 0; row < ROWS; row++) {
-      for (let col = 0; col < COLS; col++) {
+    const cellEdges: number[][] = new Array(cols * rows);
+    for (let row = 0; row < rows; row++) {
+      for (let col = 0; col < cols; col++) {
         const edges: number[] = [];
-        // 4 X-edges (vary j, k; run along x from col → col+1)
         for (let j = 0; j < 2; j++)
           for (let k = row; k <= row + 1; k++)
             edges.push(getOrAddEdge([col, j, k], [col + 1, j, k]));
-        // 4 Y-edges (vary i, k; run along y from 0 → 1)
         for (let i = col; i <= col + 1; i++)
           for (let k = row; k <= row + 1; k++)
             edges.push(getOrAddEdge([i, 0, k], [i, 1, k]));
-        // 4 Z-edges (vary i, j; run along z from row → row+1)
         for (let i = col; i <= col + 1; i++)
           for (let j = 0; j < 2; j++)
             edges.push(getOrAddEdge([i, j, row], [i, j, row + 1]));
-        cellEdges[cellIndex(col, row)] = edges;
+        cellEdges[row * cols + col] = edges;
       }
     }
 
     const numEdges = edgeMap.size;
-    const colors = new Float32Array(numEdges * 6); // 2 verts * 3 channels per edge
+    const colors = new Float32Array(numEdges * 6);
+
+    // edgeOwners: for each edge, a list of cell indices that share it.
+    // Used when repainting a cell to recompute the correct color on shared edges.
+    const edgeOwners: number[][] = Array.from({ length: numEdges }, () => []);
+    for (let row = 0; row < rows; row++) {
+      for (let col = 0; col < cols; col++) {
+        const ci = row * cols + col;
+        for (const e of cellEdges[ci]) edgeOwners[e].push(ci);
+      }
+    }
 
     const writeEdge = (edgeIdx: number, c: THREE.Color) => {
       const off = edgeIdx * 6;
@@ -134,12 +135,11 @@ const GridCells = forwardRef<GridCellsHandle>(function GridCells(_, ref) {
     const defaultC = new THREE.Color(DEFAULT_CELL_COLOR);
     const planetC = new THREE.Color(PLANET_CELL_COLOR);
 
-    // Initial fill: default for all, then planet cells overwrite shared edges
     for (let i = 0; i < numEdges; i++) writeEdge(i, defaultC);
-    for (let row = 0; row < ROWS; row++) {
-      for (let col = 0; col < COLS; col++) {
-        if (PLANET_CELLS.has(gridKey(col, row))) {
-          for (const e of cellEdges[cellIndex(col, row)]) writeEdge(e, planetC);
+    for (let row = 0; row < rows; row++) {
+      for (let col = 0; col < cols; col++) {
+        if (planetCells.has(gridKey(col, row))) {
+          for (const e of cellEdges[row * cols + col]) writeEdge(e, planetC);
         }
       }
     }
@@ -149,12 +149,21 @@ const GridCells = forwardRef<GridCellsHandle>(function GridCells(_, ref) {
     const colorAttr = new THREE.BufferAttribute(colors, 3);
     geom.setAttribute("color", colorAttr);
 
-    return { geometry: geom, colorAttr, cellEdges };
-  }, []);
+    return { geometry: geom, colorAttr, cellEdges, edgeOwners };
+  }, [cols, rows, centerCol, centerRow, cellSize, planetCells]);
 
   useEffect(() => () => geometry.dispose(), [geometry]);
 
-  // Helpers operating on the shared color buffer
+  // Per-cell custom color override (null = use default/planet color).
+  const cellColors = useRef<Array<string | null>>(
+    new Array(cols * rows).fill(null)
+  );
+
+  // Keep cellColors sized correctly if cols/rows ever change.
+  useEffect(() => {
+    cellColors.current = new Array(cols * rows).fill(null);
+  }, [cols, rows]);
+
   const writeEdgeColor = useCallback(
     (edgeIdx: number, c: THREE.Color) => {
       const arr = colorAttr.array as Float32Array;
@@ -165,39 +174,80 @@ const GridCells = forwardRef<GridCellsHandle>(function GridCells(_, ref) {
     [colorAttr]
   );
 
+  // Resolve the correct color for a single edge by checking all cells
+  // that share it and picking the highest-priority one.
+  const resolveEdgeColor = useCallback(
+    (edgeIdx: number) => {
+      let bestPriority = -1;
+      let bestColor: THREE.Color = new THREE.Color(DEFAULT_CELL_COLOR);
+
+      for (const ci of edgeOwners[edgeIdx]) {
+        const col = ci % cols;
+        const row = Math.floor(ci / cols);
+        const custom = cellColors.current[ci];
+
+        if (custom !== null) {
+          // Priority 2: civ / custom color
+          if (bestPriority < 2) {
+            bestPriority = 2;
+            bestColor = new THREE.Color(custom);
+          }
+        } else if (planetCells.has(gridKey(col, row))) {
+          // Priority 1: planet cell
+          if (bestPriority < 1) {
+            bestPriority = 1;
+            bestColor = new THREE.Color(PLANET_CELL_COLOR);
+          }
+        } else {
+          // Priority 0: default
+          if (bestPriority < 0) {
+            bestPriority = 0;
+            bestColor = new THREE.Color(DEFAULT_CELL_COLOR);
+          }
+        }
+      }
+
+      writeEdgeColor(edgeIdx, bestColor);
+    },
+    [edgeOwners, cols, planetCells, writeEdgeColor]
+  );
+
+  // Paint a cell: record its color, then re-resolve every edge it touches
+  // (including shared ones) so neighbors always display correctly.
   const paintCell = useCallback(
-    (col: number, row: number, c: THREE.Color) => {
-      if (col < 0 || col >= COLS || row < 0 || row >= ROWS) return;
-      const edges = cellEdges[cellIndex(col, row)];
-      for (const e of edges) writeEdgeColor(e, c);
+    (col: number, row: number, color: string | null) => {
+      if (col < 0 || col >= cols || row < 0 || row >= rows) return;
+      const ci = cellIndex(col, row);
+      cellColors.current[ci] = color;
+
+      const edges = cellEdges[ci];
+      if (!edges) return;
+      for (const e of edges) resolveEdgeColor(e);
       colorAttr.needsUpdate = true;
     },
-    [cellEdges, writeEdgeColor, colorAttr]
+    [cellEdges, resolveEdgeColor, colorAttr, cols, rows, cellIndex]
   );
 
   const setCellColor = useCallback(
-    (col: number, row: number, color: string) => paintCell(col, row, new THREE.Color(color)),
+    (col: number, row: number, color: string) => paintCell(col, row, color),
     [paintCell]
   );
 
   const resetCellColor = useCallback(
-    (col: number, row: number) => {
-      const base = PLANET_CELLS.has(gridKey(col, row)) ? PLANET_CELL_COLOR : DEFAULT_CELL_COLOR;
-      paintCell(col, row, new THREE.Color(base));
-    },
+    (col: number, row: number) => paintCell(col, row, null),
     [paintCell]
   );
 
   const resetAll = useCallback(() => {
-    const d = new THREE.Color(DEFAULT_CELL_COLOR);
-    const p = new THREE.Color(PLANET_CELL_COLOR);
-    // Same two-pass logic as initial fill
-    for (let row = 0; row < ROWS; row++) {
-      for (let col = 0; col < COLS; col++) {
-        paintCell(col, row, PLANET_CELLS.has(gridKey(col, row)) ? p : d);
+    cellColors.current.fill(null);
+    for (let row = 0; row < rows; row++) {
+      for (let col = 0; col < cols; col++) {
+        const edges = cellEdges[cellIndex(col, row)];
+        if (edges) for (const e of edges) resolveEdgeColor(e);
       }
     }
-  }, [paintCell]);
+    colorAttr.needsUpdate = true;
+  }, [cellEdges, resolveEdgeColor, colorAttr, cols, rows, cellIndex]);
 
   useImperativeHandle(
     ref,
@@ -213,26 +263,49 @@ const GridCells = forwardRef<GridCellsHandle>(function GridCells(_, ref) {
 });
 
 // ── Scene ────────────────────────────────────────────────────
-function Scene({ ready, onReady }: { ready: boolean; onReady: () => void }) {
+type SceneProps = {
+  ready: boolean;
+  onReady: () => void;
+  planets: PlanetDef[];
+  centerCol: number;
+  centerRow: number;
+  cellSize: number;
+};
+
+function Scene({ ready, onReady, planets, centerCol, centerRow, cellSize }: SceneProps) {
   useEffect(() => {
     const id = requestAnimationFrame(onReady);
     return () => cancelAnimationFrame(id);
   }, [onReady]);
 
-  const planetRefs = useRef<Record<string, RefObject<Group | null>>>(
-    Object.fromEntries(PLANETS.map((p) => [gridKey(...p.grid), { current: null }]))
-  ).current;
+  const gridToWorld = useCallback(
+    (col: number, row: number): [number, number, number] => [
+      (col - centerCol) * cellSize,
+      0,
+      (row - centerRow) * cellSize,
+    ],
+    [centerCol, centerRow, cellSize]
+  );
+
+  const planetRefs = useRef<Record<string, RefObject<Group | null>>>({});
+  // Ensure refs exist for all planet cells
+  for (const p of planets) {
+    const k = gridKey(...p.grid);
+    if (!planetRefs.current[k]) planetRefs.current[k] = { current: null };
+  }
 
   return (
     <>
       <Star name="star" scale={STAR_SCALE} />
-      {PLANETS.map((p, i) => {
+      {planets.map((p, i) => {
         const key = gridKey(...p.grid);
-        const targetRef = p.targetGrid ? planetRefs[gridKey(...p.targetGrid)] : undefined;
+        const targetRef = p.targetGrid
+          ? planetRefs.current[gridKey(...p.targetGrid)]
+          : undefined;
         return (
           <Planet
-            key={i}
-            ref={planetRefs[key]}
+            key={`${key}-${i}`}
+            ref={planetRefs.current[key]}
             name={p.name}
             scale={p.scale}
             position={gridToWorld(p.grid[0], p.grid[1])}
@@ -258,9 +331,28 @@ export type SolarSystemHandle = {
   resetAllCellColors: () => void;
 };
 
-const SolarSystem = forwardRef<SolarSystemHandle>(function SolarSystem(_props, ref) {
+type SolarSystemProps = {
+  planets?: PlanetDef[];
+  gridWidth?: number;  // number of cells along X (col)
+  gridHeight?: number; // number of cells along Z (row)
+};
+
+const SolarSystem = forwardRef<SolarSystemHandle, SolarSystemProps>(function SolarSystem(
+  { planets = [], gridWidth = 11, gridHeight = 11 },
+  ref
+) {
   const [ready, setReady] = useState(false);
   const gridRef = useRef<GridCellsHandle>(null);
+
+  const cols = gridWidth;
+  const rows = gridHeight;
+  const centerCol = Math.floor((cols - 1) / 2);
+  const centerRow = Math.floor((rows - 1) / 2);
+
+  const planetCells = useMemo(
+    () => new Set(planets.map((p) => gridKey(...p.grid))),
+    [planets]
+  );
 
   useImperativeHandle(
     ref,
@@ -285,10 +377,25 @@ const SolarSystem = forwardRef<SolarSystemHandle>(function SolarSystem(_props, r
         <Stars radius={300} depth={60} count={5000} factor={7} fade />
 
         <Suspense fallback={null}>
-          <Scene ready={ready} onReady={() => setReady(true)} />
+          <Scene
+            ready={ready}
+            onReady={() => setReady(true)}
+            planets={planets}
+            centerCol={centerCol}
+            centerRow={centerRow}
+            cellSize={CELL_SIZE}
+          />
         </Suspense>
 
-        <GridCells ref={gridRef} />
+        <GridCells
+          ref={gridRef}
+          cols={cols}
+          rows={rows}
+          centerCol={centerCol}
+          centerRow={centerRow}
+          cellSize={CELL_SIZE}
+          planetCells={planetCells}
+        />
 
         <OrbitControls makeDefault target={[0, 0, 0]} enableDamping dampingFactor={0.05} />
       </Canvas>

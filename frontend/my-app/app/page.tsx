@@ -6,9 +6,11 @@ import PPOControls from "@/components/PPOcontrols";
 import GraficasContainer from "@/components/Graphics";
 import Header from "@/components/Header";
 import ToggleSwitch from "@/components/Switch";
+import { Galada } from "next/font/google";
+import Galaxy from "@/components/Galaxy";
 
 // Optimizamos renderizado
-const SolarSystemMemo = React.memo(SolarSystem);
+const SolarSystemMemo = React.memo(Galaxy);
 const GraphicsMemo = React.memo(GraficasContainer);
 
 export default function Home() {
