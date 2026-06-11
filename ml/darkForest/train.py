@@ -8,7 +8,6 @@ from collections import deque
 from stopper import DarkForestStopper
 from utils import ObsFlatten, MaskSanitize
 
-
 import numpy as np
 import torch
 import torch.nn as nn
@@ -22,89 +21,22 @@ except ImportError:
 from torchrl.data import LazyTensorStorage, ReplayBuffer
 from torchrl.data.replay_buffers.samplers import SamplerWithoutReplacement
 from torchrl.envs import RewardSum, StepCounter, TransformedEnv
-from torchrl.envs.batched_envs import SerialEnv
+from torchrl.envs.batched_envs import ParallelEnv
 from torchrl.envs.libs.pettingzoo import PettingZooWrapper
 from torchrl.envs.utils import ExplorationType, MarlGroupMapType, set_exploration_type
 from torchrl.modules import MaskedCategorical, MultiAgentMLP, ProbabilisticActor
 from torchrl.objectives import ClipPPOLoss, ValueEstimators
 
+from config import get_config, seed_everything
+from rewards import *
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from env import (  # noqa: E402
     DarkForestParallelEnv,
     A_EXPLORE,
-    A_BIRTH,
     A_BROADCAST,
     N_NONTARGETED,
 )
-
-GROUP = "agents"
-
-def parse_args():
-    p = argparse.ArgumentParser()
-    p.add_argument("--seed", type=int, default=1)
-    p.add_argument("--torch-deterministic", action="store_true", default=True)
-    p.add_argument("--run-name", type=str, default=None)
-    p.add_argument("--device", type=str, default="auto")
-
-    # environment
-    p.add_argument("--num-envs", type=int, default=4)
-    p.add_argument("--names", type=str, nargs="+",
-                   default=["Santi", "earth", "aliens"],
-                   help="civilization names; count = number of agents")
-    p.add_argument("--width", type=int, default=10)
-    p.add_argument("--height", type=int, default=10)
-    p.add_argument("--initial-planets", type=int, default=8)
-    p.add_argument("--max-steps", type=int, default=200)
-    p.add_argument("--harvest-rate", type=float, default=0.1)
-    p.add_argument("--initial-resources", type=float, default=50.0)
-    p.add_argument("--initial-population", type=float, default=10.0)
-    p.add_argument("--reward", type=str, nargs="*", default=[],
-                   help="override env reward weights, e.g. "
-                        "--reward broadcast=0 destroyed=50 conquer=3")
-
-    # PPO
-    p.add_argument("--total-timesteps", type=int, default=1_000_000,
-                   help="env transitions (num_envs*num_steps per iteration)")
-    p.add_argument("--learning-rate", type=float, default=2.5e-4)
-    p.add_argument("--anneal-lr", action="store_true", default=True)
-    p.add_argument("--num-steps", type=int, default=128,
-                   help="rollout length per env per iteration")
-    p.add_argument("--gamma", type=float, default=0.99)
-    p.add_argument("--gae-lambda", type=float, default=0.95)
-    p.add_argument("--num-minibatches", type=int, default=4)
-    p.add_argument("--update-epochs", type=int, default=4)
-    p.add_argument("--clip-coef", type=float, default=0.2)
-    p.add_argument("--ent-coef", type=float, default=0.01)
-    p.add_argument("--vf-coef", type=float, default=0.5)
-    p.add_argument("--max-grad-norm", type=float, default=0.5)
-    p.add_argument("--norm-adv", action="store_true", default=True)
-    p.add_argument("--target-kl", type=float, default=None)
-    p.add_argument("--hidden-dim", type=int, default=256)
-    p.add_argument("--critic", choices=["independent", "centralized"],
-                   default="independent",
-                   help="independent=IPPO, centralized=MAPPO")
-
-    # dark-forest stopper
-    p.add_argument("--stop-mode",
-                   choices=["silence", "extermination", "either", "off"],
-                   default="silence")
-    p.add_argument("--min-iters", type=int, default=30)
-    p.add_argument("--silence-threshold", type=float, default=0.01)
-    p.add_argument("--silence-patience", type=int, default=10)
-    p.add_argument("--broadcast-peak-threshold", type=float, default=0.05)
-    p.add_argument("--silence-rel-drop", type=float, default=0.25)
-    p.add_argument("--annihilation-threshold", type=float, default=0.95)
-    p.add_argument("--ema-beta", type=float, default=0.9)
-
-    # rendering / recording
-    p.add_argument("--record-every", type=int, default=0,
-                   help="record one render episode every N iterations "
-                        "(0 = only at the end)")
-    p.add_argument("--record-episodes", type=int, default=1,
-                   help="episodes recorded after training finishes")
-    p.add_argument("--record-deterministic", action="store_true", default=False,
-                   help="use argmax actions when recording")
-    return p.parse_args()
 
 def make_base_env(args):
     return DarkForestParallelEnv(
@@ -127,7 +59,7 @@ def make_torchrl_env(args, device):
         )
         return wrapped
 
-    env = SerialEnv(args.num_envs, maker, device=device)
+    env = ParallelEnv(args.num_envs, maker, device=device)
     env = TransformedEnv(
         env,
         RewardSum(
@@ -210,8 +142,6 @@ def decode_action(env: DarkForestParallelEnv, action: int):
     """Turn a flat action index into a renderable description."""
     if action == A_EXPLORE:
         return {"id": int(action), "type": "explore", "target": None}
-    if action == A_BIRTH:
-        return {"id": int(action), "type": "increase_birth_rate", "target": None}
     if action == A_BROADCAST:
         return {"id": int(action), "type": "broadcast", "target": None}
     t = action - N_NONTARGETED
@@ -220,7 +150,6 @@ def decode_action(env: DarkForestParallelEnv, action: int):
     return {"id": int(action),
             "type": ACTION_TYPE_NAMES[int(ttype)],
             "target": [int(coord[0]), int(coord[1])]}
-
 
 def snapshot_planets(env: DarkForestParallelEnv):
     return [
@@ -232,7 +161,6 @@ def snapshot_planets(env: DarkForestParallelEnv):
         }
         for p in env.planets
     ]
-
 
 def snapshot_civilizations(env: DarkForestParallelEnv):
     out = []
@@ -258,7 +186,6 @@ def snapshot_civilizations(env: DarkForestParallelEnv):
                                      for (r, c) in civ.explored_cells),
         })
     return out
-
 
 def _policy_actions(policy, env, obs, device, deterministic, action_dim):
     """Run the trained policy on raw PettingZoo observations."""
@@ -289,7 +216,6 @@ def _policy_actions(policy, env, obs, device, deterministic, action_dim):
         td = policy(td)
     acts = td[GROUP, "action"].cpu().numpy()
     return {name: int(acts[i]) for i, name in enumerate(names)}
-
 
 def record_episode(policy, args, device, action_dim, out_path,
                    seed=None, deterministic=False):
@@ -344,26 +270,72 @@ def record_episode(policy, args, device, action_dim, out_path,
     env.close()
     return data["meta"]
 
-def main():
-    args = parse_args()
-    args.reward_weights = {}
-    for kv in args.reward:
-        k, v = kv.split("=")
-        args.reward_weights[k.strip()] = float(v)
+def record_episode_stream(policy, args, device, action_dim,
+                          on_step, seed=None, deterministic=False):
+    """
+    Like record_episode but streams frames live via on_step(frame) instead of
+    accumulating them.  on_step receives the same dict that record_episode puts
+    in frames[], plus a "meta" key on the final frame once the episode ends.
 
-    if args.device == "auto":
-        args.device = "cuda" if torch.cuda.is_available() else "cpu"
+    Returns the episode meta dict (same as record_episode).
+    """
+    env = make_base_env(args)
+    obs, _ = env.reset(seed=seed)
+
+    # Step 0 – initial board state before any action
+    on_step({
+        "step": 0,
+        "actions": {},
+        "rewards": {},
+        "terminations": {},
+        "truncations": {},
+        "planets": snapshot_planets(env),
+        "civilizations": snapshot_civilizations(env),
+        "episode_done": False,
+    })
+
+    step = 0
+    while env.agents:
+        all_actions = _policy_actions(policy, env, obs, device,
+                                      deterministic, action_dim)
+        acting = {n: all_actions[n] for n in env.agents}
+        obs, rewards, terms, truncs, _ = env.step(acting)
+        step += 1
+        on_step({
+            "step": step,
+            "actions": {n: decode_action(env, a) for n, a in acting.items()},
+            "rewards": {n: float(r) for n, r in rewards.items()},
+            "terminations": {n: bool(t) for n, t in terms.items()},
+            "truncations": {n: bool(t) for n, t in truncs.items()},
+            "planets": snapshot_planets(env),
+            "civilizations": snapshot_civilizations(env),
+            "episode_done": not env.agents,
+        })
+
+    survivors = int((next_pop[e, t] > 0).sum())
+    meta = {
+        "width": env.width,
+        "height": env.height,
+        "names": list(env.possible_agents),
+        "max_steps": env.max_steps,
+        "episode_length": step,
+        "survivors": survivors,
+        "annihilation": survivors <= 1,
+        "seed": seed,
+        "deterministic": deterministic,
+    }
+    env.close()
+    return meta
+
+
+def main():
+    args = get_config()
     device = torch.device(args.device)
 
-    run_name = args.run_name or f"darkforest_torchrl_{args.critic}_{int(time.time())}"
-    run_dir = os.path.join("runs", run_name)
+    run_dir = args.run_dir
     os.makedirs(run_dir, exist_ok=True)
 
-    import random
-    random.seed(args.seed)
-    np.random.seed(args.seed)
-    torch.manual_seed(args.seed)
-    torch.backends.cudnn.deterministic = args.torch_deterministic
+    seed_everything(args)
 
     frames_per_batch = args.num_envs * args.num_steps
     num_iters = max(1, args.total_timesteps // frames_per_batch)
@@ -373,7 +345,7 @@ def main():
     env.set_seed(args.seed)
     policy, critic, obs_dim, action_dim, n_agents = build_models(args, env, device)
 
-    print(f"[setup] run={run_name} critic={args.critic} device={device} "
+    print(f"[setup] run={args.run_name} critic={args.critic} device={device} "
           f"n_agents={n_agents} obs_dim={obs_dim} action_dim={action_dim} "
           f"iters={num_iters} stop-mode={args.stop_mode}")
 
@@ -488,7 +460,6 @@ def main():
             if (args.target_kl is not None and approx_kl is not None
                     and approx_kl > args.target_kl):
                 break
-        return v_loss
 
         mean_ret = float(np.mean(return_hist)) if return_hist else float("nan")
         mean_surv = float(np.mean(surv_hist)) if surv_hist else float("nan")
