@@ -26,7 +26,7 @@ export async function verifyPassword(username, password) {
 export async function getUserByUsername(username) {
     const conn = await connectToDB();
     const [rows] = await conn.execute(
-        "SELECT id, username, role FROM users WHERE username = ?",
+        "SELECT id, username, role, password FROM users WHERE username = ?",
         [username]
     );
     conn.end();
