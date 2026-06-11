@@ -2,13 +2,14 @@ import express from 'express';
 import * as Controller from './controller.js';
 import { verifyToken } from './middleware/auth.js';
 import { checkAdminRole } from './middleware/role.js';
+import { loginLimiter, registerLimiter, logoutLimiter } from './middleware/rateLimiter.js';
 
 const router = express.Router();
 
 //login endpoint (no token required)
-router.post('/login', Controller.login);
-router.post('/logout', verifyToken, Controller.logout);
-router.post('/register', Controller.register);
+router.post('/login', loginLimiter, Controller.login);
+router.post('/logout', logoutLimiter, verifyToken, Controller.logout);
+router.post('/register', registerLimiter, Controller.register);
 
 //admin routes
 router.get('/usuarios', verifyToken, checkAdminRole, Controller.getUsers);
