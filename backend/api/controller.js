@@ -6,13 +6,13 @@ import { logger } from '../utils/logger/logger.js';
 const VALID_CRITICS = ['IPPO', 'MAPPO'];
 
 const validateScenarioData = (data) => {
-    const requiredFields = [
-        'name', 'broadcast_reward', 'destroyed_reward', 'conquer_reward',
-        'colonize_reward', 'survive_reward', 'population_reward', 'science_reward',
-        'explore_reward', 'invalid_reward', 'civilizations', 'map_width', 'map_height',
-        'planets', 'harvest_rate', 'initial_resources', 'initial_population', 'max_steps',
-        'critic', 'learning_rate', 'gamma'
-    ];
+const requiredFields = [
+    'name', 'broadcast_reward', 'destroyed_reward', 'conquer_reward',
+    'colonize_reward', 'survive_reward', 'science_reward',
+    'explore_reward', 'invalid_reward', 'civilizations', 'map_width', 'map_height',
+    'planets', 'harvest_rate', 'initial_resources', 'max_steps',
+    'critic', 'learning_rate', 'gamma'
+];  
 
     const missingFields = requiredFields.filter(field => !(field in data) || data[field] === undefined);
     if (missingFields.length > 0) {
