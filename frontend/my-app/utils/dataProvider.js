@@ -313,12 +313,11 @@ const connectSocket = () => {
         return Promise.reject(new ApiError('WebSocket unavailable on the server', { code: 'NETWORK' }));
     }
 
-    // Browsers can't set headers on WebSockets, so auth goes in the query string
+    // Browsers can't set headers on WebSockets, so auth goes in the query string.
+    // The sim server (vizWebsocket.py) currently doesn't validate the token, so
+    // we attach it when available but don't refuse to connect without one.
     const token = getToken();
-    if (!token) {
-        return Promise.reject(new ApiError('Not authenticated', { code: 'NOT_AUTHENTICATED', status: 401 }));
-    }
-    const url = `${baseUrl}?token=${encodeURIComponent(token)}`;
+    const url = token ? `${baseUrl}?token=${encodeURIComponent(token)}` : baseUrl;
 
     socket = new WebSocket(url);
 
@@ -373,17 +372,177 @@ const sendSocketMessage = async (message) => {
 };
 
 /**
- * Sends the current PPO-controls configuration to the simulation server
- * over the WebSocket, asking it to apply the config and restart.
+ * Tells the simulation server to begin a training run with the given config.
+ * Matches the {cmd: "start", config} contract in vizWebsocket.py. The server
+ * will reply with a "started" message followed by a stream of "step",
+ * "iteration", "episode", "done" frames over onSimulationMessage.
+ *
+ * @param {object} [config] - any train.py / config.py argument override
+ *   (num_envs, width, height, names, total_timesteps, stream_every, ...)
+ */
+export const startSimulation = async (config = {}) => {
+    await sendSocketMessage({ cmd: 'start', config });
+};
+
+/**
+ * Asks the simulation server to abort the current run. Server replies with
+ * a "stopping" then "stopped" message.
+ */
+export const stopSimulation = async () => {
+    await sendSocketMessage({ cmd: 'stop' });
+};
+
+/**
+ * Translate the nested camelCase config from PPOControls into the flat
+ * snake_case shape that train.py / config.py expects (see _build_args in
+ * vizWebsocket.py — it raises AttributeError on unknown keys).
+ */
+const toServerConfig = (config) => {
+    const { ppo = {}, env = {}, rewards = {} } = config || {};
+    const out = {};
+
+    // PPO
+    if (ppo.learningRate !== undefined) out.learning_rate = ppo.learningRate;
+    if (ppo.gamma !== undefined) out.gamma = ppo.gamma;
+    // train.py: centralised=(args.critic == "centralized")  → MAPPO vs IPPO
+    if (ppo.critic !== undefined) {
+        out.critic = ppo.critic === 'MAPPO' ? 'centralized' : 'independent';
+    }
+
+    // Env — civilizations is expressed as the `names` list length
+    if (env.civilizations !== undefined) {
+        out.names = Array.from({ length: env.civilizations }, (_, i) => `civ_${i + 1}`);
+    }
+    if (env.width !== undefined) out.width = env.width;
+    if (env.height !== undefined) out.height = env.height;
+    if (env.planets !== undefined) out.initial_planets = env.planets;
+    if (env.harvestRate !== undefined) out.harvest_rate = env.harvestRate;
+    if (env.initialResources !== undefined) out.initial_resources = env.initialResources;
+    if (env.initialPopulation !== undefined) out.initial_population = env.initialPopulation;
+    if (env.maxSteps !== undefined) out.max_steps = env.maxSteps;
+
+    // Rewards — keys already match the GROUP reward dict in rewards.py
+    if (rewards && Object.keys(rewards).length) out.reward_weights = { ...rewards };
+
+    return out;
+};
+
+// Wait for the next message matching `predicate`, or resolve on timeout.
+const waitForMessage = (predicate, timeoutMs = 5000) =>
+    new Promise((resolve) => {
+        const unsubscribe = onSimulationMessage((msg) => {
+            if (msg && typeof msg === 'object' && predicate(msg)) {
+                clearTimeout(timer);
+                unsubscribe();
+                resolve(msg);
+            }
+        });
+        const timer = setTimeout(() => { unsubscribe(); resolve(null); }, timeoutMs);
+    });
+
+// How long to wait for the training thread to actually finish after we ask it
+// to stop. Large grids (100×100, 5 civs) can take 30–60 s to complete one
+// iteration, so we need a generous ceiling here.
+const STOP_TIMEOUT_MS = 90_000;
+
+// After sending start, the server echoes "started" immediately, or returns an
+// "already running" error if the old thread hasn't exited yet. We retry a few
+// times with a short back-off before giving up.
+const START_MAX_RETRIES = 10;
+const START_RETRY_DELAY_MS = 1_500;
+
+/**
+ * Stops the current run (if any), waits for confirmation that the training
+ * thread has fully exited, then starts a new one with the PPOControls config.
+ *
+ * Race conditions addressed:
+ *   1. The old training thread may take a long time to notice stop_event
+ *      (it only checks at the top of each iteration). We wait up to 90 s.
+ *   2. The thread emits "stopped" and then runs its `finally` block to clean
+ *      up before truly exiting. If we fire start between those two moments the
+ *      server still returns "training already running". We retry with back-off.
  *
  * @param {object} config - the ConfigState from PPOControls ({ ppo, env, rewards })
  */
 export const applyAndRestart = async (config) => {
-    await sendSocketMessage({
-        type: 'apply_and_restart',
-        config,
-        sentAt: new Date().toISOString(),
-    });
+    const serverConfig = toServerConfig(config);
+
+    // Arm the listener BEFORE sending stop so we don't miss "stopped"/"done"
+    // arriving during the await below.
+    //   "stopped" — training thread aborted by our stop command
+    //   "done"    — training finished naturally (rare timing edge case)
+    //   "error" /nothing to stop/ — no run was active, safe to start immediately
+    const stopAck = waitForMessage(
+        (m) => m.type === 'stopped' ||
+               m.type === 'done' ||
+               (m.type === 'error' && /nothing to stop/i.test(m.message || '')),
+        STOP_TIMEOUT_MS,
+    );
+
+    await sendSocketMessage({ cmd: 'stop' });
+    const stopResult = await stopAck;
+
+    if (stopResult === null) {
+        // Timed out — the thread may still be running. Throw so the UI can
+        // show an error rather than silently proceeding.
+        throw new ApiError(
+            `Training did not stop within ${STOP_TIMEOUT_MS / 1000}s. ` +
+            'Try again once the current iteration finishes.',
+            { code: 'TIMEOUT' },
+        );
+    }
+
+    // Small grace period: the thread emits "stopped" and then runs its
+    // `finally` block. If we fire start immediately we can still hit
+    // "training already running". 300 ms is usually enough; the retry loop
+    // below handles the rest.
+    await sleep(300);
+
+    // Retry loop: send start, wait for "started" or "already running" error.
+    for (let attempt = 1; attempt <= START_MAX_RETRIES; attempt++) {
+        // Arm the start-ack listener before sending so we can't miss the reply.
+        const startAck = waitForMessage(
+            (m) => m.type === 'started' ||
+                   (m.type === 'error' && /already running/i.test(m.message || '')),
+            START_RETRY_DELAY_MS * 2,
+        );
+
+        await sendSocketMessage({ cmd: 'start', config: serverConfig });
+
+        const startResult = await startAck;
+
+        if (startResult && startResult.type === 'started') {
+            // Server confirmed the new run — we're done.
+            return;
+        }
+
+        if (startResult && startResult.type === 'error' &&
+            /already running/i.test(startResult.message || '')) {
+            // Old thread hasn't fully exited yet. Back off and retry.
+            if (attempt < START_MAX_RETRIES) {
+                await sleep(START_RETRY_DELAY_MS);
+                continue;
+            }
+            throw new ApiError(
+                'Could not start new training: server reports training is still running ' +
+                `after ${START_MAX_RETRIES} attempts. Please wait and try again.`,
+                { code: 'API_ERROR' },
+            );
+        }
+
+        // startAck timed out (null) — send again.
+        if (startResult === null && attempt < START_MAX_RETRIES) {
+            await sleep(START_RETRY_DELAY_MS);
+            continue;
+        }
+
+        if (startResult === null) {
+            throw new ApiError(
+                'No confirmation received from server after sending start.',
+                { code: 'TIMEOUT' },
+            );
+        }
+    }
 };
 
 // ============================================================
@@ -399,7 +558,8 @@ const dataProvider = {
     createScenario, getScenariosByUser, getOneScenarioByUser,
     updateScenario, deleteScenario,
     // simulation (websocket)
-    applyAndRestart, onSimulationMessage, closeSimulationSocket,
+    startSimulation, stopSimulation, applyAndRestart,
+    onSimulationMessage, closeSimulationSocket,
 };
 
 export default dataProvider;
