@@ -13,9 +13,10 @@ type ConfigState = {
     initialPopulation: number; maxSteps: number;
   };
   rewards: {
-    broadcast: number; destroyed: number; conquer: number;
-    colonize: number; survive: number; population: number;
-    science: number; explore: number; invalid: number;
+    explore: number; broadcast: number; survive: number;
+    population: number; science: number; colonize: number;
+    conquer: number; destroy: number; destroyed: number;
+    win: number; invalid: number;
   };
 };
 
@@ -59,11 +60,8 @@ const FloatInput = ({ label, value, min, max, onCommit }: { label: string; value
     <div className="flex flex-col gap-1">
       <label className="text-xs font-light tracking-wider text-gray-300">{label}</label>
       <input
-        type="number"
+        type="text"
         inputMode="decimal"
-        step="any"
-        min={min}
-        max={max}
         value={text}
         onChange={(e) => setText(e.target.value)}
         onBlur={commit}
@@ -79,13 +77,14 @@ export default function PPOControls() {
     ppo: { learningRate: 0.0003, gamma: 0.99, critic: "IPPO" },
     env: {
       civilizations: 3, width: 20, height: 20,
-      planets: 9, harvestRate: 0.5, initialResources: 50,
+      planets: 10, harvestRate: 0.1, initialResources: 50,
       initialPopulation: 10, maxSteps: 200
     },
     rewards: {
-      broadcast: 0.1, destroyed: 10, conquer: 3,
-      colonize: 1, survive: 0.1, population: 0.01,
-      science: 0.01, explore: 0.1, invalid: 0
+      explore: 0.1, broadcast: 0.5, survive: 0.1,
+      population: 0.0, science: 0.01, colonize: 1.0,
+      conquer: 20.0, destroy: 4.0, destroyed: 30.0,
+      win: 25.0, invalid: 0.0
     }
   });
 
