@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import LoadSimulationModal from "./LoadSimulation";
 import SaveSimulationModal from "./SaveSimulation";
-import { applyAndRestart, ApiError } from "../utils/dataProvider"; // adjust path to where dataProvider.js lives
+import { applyAndRestart, ApiError, handleUnauthorized } from "../utils/dataProvider"; // adjust path to where dataProvider.js lives
 
 type ConfigState = {
   ppo: { learningRate: number; gamma: number; critic: "IPPO" | "MAPPO" };
@@ -104,6 +104,11 @@ export default function PPOControls() {
       setApplyStatus("sent");
       setTimeout(() => setApplyStatus("idle"), 2000);
     } catch (err) {
+      // Check for unauthorized error and handle it
+      if (err instanceof ApiError && err.isUnauthorized) {
+        await handleUnauthorized();
+        return;
+      }
       setApplyStatus("error");
       setApplyError(err instanceof ApiError ? err.message : "Failed to send configuration");
     }

@@ -48,6 +48,31 @@ export const clearAuth = () => {
     localStorage.removeItem(ROLE_KEY);
 };
 
+/**
+ * Handle unauthorized (401) errors by stopping the simulation,
+ * closing the socket, clearing auth, and redirecting to login.
+ * Called when an API request or WebSocket receives a 401 response.
+ */
+export const handleUnauthorized = async () => {
+    // Try to stop the simulation gracefully
+    try {
+        await stopSimulation();
+    } catch {
+        // Ignore errors — we're logging out anyway
+    }
+
+    // Close the WebSocket connection
+    closeSimulationSocket();
+
+    // Clear stored auth tokens
+    clearAuth();
+
+    // Redirect to login page
+    if (typeof window !== 'undefined') {
+        window.location.href = '/';
+    }
+};
+
 // ============================================================
 // Helpers
 // ============================================================

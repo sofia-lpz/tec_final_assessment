@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { getScenariosByUser, deleteScenario, scenarioToConfig, ApiError } from "../utils/dataProvider"; // adjust path to where dataProvider.js lives
+import { getScenariosByUser, deleteScenario, scenarioToConfig, ApiError, handleUnauthorized } from "../utils/dataProvider"; // adjust path to where dataProvider.js lives
 
 // Metadatos del escenario cargado — el padre los guarda para "Save" vs "Save As"
 export type LoadedScenarioMeta = { id: number; name: string };
@@ -54,6 +54,11 @@ export default function LoadSimulationModal({ isOpen, onClose, onLoad }: LoadMod
         setPage(Math.ceil(count / PAGE_SIZE) - 1);
       }
     } catch (err: any) {
+      // Check for unauthorized error and handle it
+      if (err instanceof ApiError && err.isUnauthorized) {
+        await handleUnauthorized();
+        return;
+      }
       if (err instanceof ApiError && err.code === "CANCELLED") return;
       setError(err instanceof ApiError ? err.message : "Failed to fetch simulations");
       setScenarios([]);
@@ -102,6 +107,11 @@ export default function LoadSimulationModal({ isOpen, onClose, onLoad }: LoadMod
       // Refresca la página actual; fetchPage retrocede si quedó vacía
       await fetchPage(page);
     } catch (err) {
+      // Check for unauthorized error and handle it
+      if (err instanceof ApiError && err.isUnauthorized) {
+        await handleUnauthorized();
+        return;
+      }
       setDeleteError(
         err instanceof ApiError
           ? `COULD NOT DELETE "${sim.name.toUpperCase()}": ${err.message.toUpperCase()}`
