@@ -94,6 +94,7 @@ export default function PPOControls() {
   const [isSaveModalOpen, setIsSaveModalOpen] = useState(false);
   const [applyStatus, setApplyStatus] = useState<"idle" | "sending" | "sent" | "error">("idle");
   const [applyError, setApplyError] = useState<string | null>(null);
+  const [currentScenario, setCurrentScenario] = useState<{ id: number; name: string } | null>(null);
 
   const handleApply = async () => {
     setApplyStatus("sending");
@@ -111,14 +112,15 @@ export default function PPOControls() {
   const handleLoadClick = () => setIsModalOpen(true);
 
   // El modal ya persiste el escenario por su cuenta (dataProvider.createScenario).
-  // Este callback solo se dispara tras un guardado exitoso, por si el panel
-  // necesita reaccionar (p. ej. refrescar una lista de escenarios guardados).
-  const handleSaved = (created: unknown, name: string) => {
-    console.log(`Simulación '${name}' guardada en BD:`, created);
+  // Este callback solo se dispara tras un guardado exitoso.
+  const handleSaved = (created: unknown, meta: { id: number; name: string }) => {
+    setCurrentScenario(meta);
+    console.log(`Simulación '${meta.name}' guardada en BD:`, created);
   };
 
-  const applyLoadedConfig = (loadedConfig: any) => {
+  const applyLoadedConfig = (loadedConfig: any, meta: { id: number; name: string }) => {
     setConfig(loadedConfig);
+    setCurrentScenario(meta);
     console.log("Configuración cargada y aplicada al panel:", loadedConfig);
   };
 
@@ -252,13 +254,61 @@ export default function PPOControls() {
           {applyStatus === "error" && applyError && (
             <p className="text-[10px] tracking-wider text-red-400 text-center">{applyError}</p>
           )}
-          
-          <button onClick={handleSaveClick} className="w-full py-2 border border-white/40 hover:bg-white/10 transition-colors text-xs tracking-widest flex items-center justify-center gap-2">
-            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
-            </svg>
-            SAVE
-          </button>
+
+          {/* Scenario name badge — shown when a scenario is loaded */}
+          {currentScenario && (
+            <div className="flex items-center gap-2 px-2 py-1.5 bg-white/5 border border-white/10 rounded-sm">
+              <svg className="w-3 h-3 text-white/40 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+              <span className="text-[10px] tracking-widest text-white/60 truncate flex-1 min-w-0">
+                {currentScenario.name.toUpperCase()}
+              </span>
+              <button
+                onClick={() => setCurrentScenario(null)}
+                className="text-white/30 hover:text-white/60 transition-colors shrink-0"
+                title="Clear loaded scenario"
+              >
+                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+          )}
+
+          {/* Save row — splits into SAVE + SAVE AS when a scenario is loaded */}
+          {currentScenario ? (
+            <div className="flex gap-2">
+              <button
+                onClick={handleSaveClick}
+                className="flex-1 py-2 border border-white/40 hover:bg-white/10 transition-colors text-[10px] tracking-widest flex items-center justify-center gap-1.5"
+                title={`Overwrite "${currentScenario.name}"`}
+              >
+                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
+                </svg>
+                SAVE
+              </button>
+              <button
+                onClick={() => { setCurrentScenario(null); handleSaveClick(); }}
+                className="flex-1 py-2 border border-white/40 hover:bg-white/10 transition-colors text-[10px] tracking-widest flex items-center justify-center gap-1.5"
+                title="Save as a new scenario"
+              >
+                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                </svg>
+                SAVE AS
+              </button>
+            </div>
+          ) : (
+            <button onClick={handleSaveClick} className="w-full py-2 border border-white/40 hover:bg-white/10 transition-colors text-xs tracking-widest flex items-center justify-center gap-2">
+              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
+              </svg>
+              SAVE
+            </button>
+          )}
+
           <button onClick={handleLoadClick} className="w-full py-2 border border-white/40 hover:bg-white/10 transition-colors text-xs tracking-widest flex items-center justify-center gap-2">
             <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
@@ -270,7 +320,7 @@ export default function PPOControls() {
       </div>
 
       <LoadSimulationModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onLoad={applyLoadedConfig} />
-      <SaveSimulationModal isOpen={isSaveModalOpen} onClose={() => setIsSaveModalOpen(false)} config={config} onSaved={handleSaved} />
+      <SaveSimulationModal isOpen={isSaveModalOpen} onClose={() => setIsSaveModalOpen(false)} config={config} current={currentScenario} onSaved={(res, meta) => handleSaved(res, meta)} />
     </>
   );
 }

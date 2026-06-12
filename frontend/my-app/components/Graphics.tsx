@@ -38,7 +38,12 @@ export type IterationMetrics = {
   iteration: number;
   broadcastRate: number | null; // 0..1
   avgSurvivors: number | null;
-  timeToAnnihilation: number | null; // null = no broadcast / survived / no replay
+  // Mean over civs of (own death step − own first broadcast step) in the
+  // replay episode. null = no broadcaster died / no replay this iteration.
+  timeToAnnihilation: number | null;
+  // EMA of timeToAnnihilation, computed by the metrics feed; carries through
+  // null gaps so the trend line is continuous.
+  ttaEma?: number | null;
   avgReward: number | null;
   policyLoss: number | null;
   valueLoss: number | null;
@@ -227,13 +232,14 @@ export default function GraficasContainer({
           </div>
         </Panel>
 
-        {/* 2 — Time to annihilation after broadcast */}
+        {/* 2 — Per-broadcaster: steps from own broadcast to own death */}
         <Panel
-          title="TIME TO ANNIHILATION AFTER BROADCAST"
+          title="BROADCAST → BROADCASTER DEATH"
           accent={COLORS.annihilation}
           right={
             <span className="text-[10px] sm:text-xs tabular-nums text-gray-200">
-              {fmt(latest?.timeToAnnihilation, 1)} steps
+              {fmt(latest?.timeToAnnihilation, 1)} steps · ema{" "}
+              {fmt(latest?.ttaEma, 1)}
             </span>
           }
         >
@@ -247,17 +253,30 @@ export default function GraficasContainer({
                 <Line
                   type="monotone"
                   dataKey="timeToAnnihilation"
-                  name="STEPS TO ANNIHILATION"
+                  name="STEPS TO DEATH (PER BROADCASTER)"
                   stroke={COLORS.annihilation}
-                  strokeWidth={2}
+                  strokeWidth={1.5}
+                  strokeOpacity={0.55}
                   dot={{ r: 1.5, fill: COLORS.annihilation, strokeWidth: 0 }}
                   connectNulls={false}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="ttaEma"
+                  name="EMA"
+                  stroke="#fca5a5"
+                  strokeWidth={2}
+                  strokeDasharray="6 3"
+                  dot={false}
+                  connectNulls
                 />
               </LineChart>
             </ResponsiveContainer>
           </div>
           <p className="mt-2 text-[9px] sm:text-[10px] tracking-wider text-gray-500">
-            Gaps are iterations with no broadcast — no signal, no hunter.
+            Steps from a civ's first broadcast to its own death (mean per
+            iteration). Gaps: no broadcaster died. A falling EMA means the
+            hunters are answering faster.
           </p>
         </Panel>
 
