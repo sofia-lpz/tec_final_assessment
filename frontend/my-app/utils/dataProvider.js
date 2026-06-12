@@ -451,6 +451,158 @@ export const stopSimulation = async () => {
     await sendSocketMessage({ cmd: 'stop' });
 };
 
+// ============================================================
+// Training metrics (feeds <GraficasContainer />)
+// ============================================================
+//
+// The sim server emits one {"type": "iteration", stats: {...}} frame per PPO
+// iteration (see vizWebsocket.py). The functions below translate those frames
+// into the IterationMetrics shape Graphics.tsx renders, and accumulate them
+// into a chart-ready array that resets whenever a new run starts.
+
+// Coerce server values: vizWebsocket sanitizes NaN/Inf to null, and fields
+// like mean_episode_return are null for the first iterations (no episode has
+// finished yet). Recharts simply skips null points, which is the honest
+// rendering — so we pass nulls through rather than faking zeros.
+const finiteOrNull = (v) =>
+    typeof v === 'number' && Number.isFinite(v) ? v : null;
+
+/**
+ * Map one websocket "iteration" frame to the IterationMetrics shape used by
+ * GraficasContainer. Returns null for any other message type.
+ *
+ * Server field          → chart field
+ * broadcast_rate        → broadcastRate        (0..1, from the training batch)
+ * mean_survivors        → avgSurvivors         (rolling mean, last 100 eps)
+ * time_to_annihilation  → timeToAnnihilation   (replay episode: steps from the
+ *                                               first broadcast to annihilation;
+ *                                               null = no broadcast / survived /
+ *                                               no replay streamed this iter)
+ * mean_episode_return   → avgReward            (rolling mean, last 100 eps)
+ * policy_loss           → policyLoss
+ * value_loss            → valueLoss
+ * entropy               → entropy              (raw policy entropy, NOT loss_entropy)
+ * approx_kl             → approxKL
+ *
+ * @param {any} msg - a payload delivered by onSimulationMessage
+ * @returns {object|null} IterationMetrics point, or null if not an iteration frame
+ */
+export const toIterationMetrics = (msg) => {
+    if (!msg || typeof msg !== 'object' || msg.type !== 'iteration') return null;
+    const s = msg.stats || {};
+    return {
+        iteration: s.iteration ?? msg.iteration ?? 0,
+        broadcastRate: finiteOrNull(s.broadcast_rate),
+        avgSurvivors: finiteOrNull(s.mean_survivors),
+        timeToAnnihilation: finiteOrNull(s.time_to_annihilation),
+        avgReward: finiteOrNull(s.mean_episode_return),
+        policyLoss: finiteOrNull(s.policy_loss),
+        valueLoss: finiteOrNull(s.value_loss),
+        entropy: finiteOrNull(s.entropy),
+        approxKL: finiteOrNull(s.approx_kl),
+        // Extras (not charted yet, but cheap to carry):
+        globalStep: finiteOrNull(s.global_step ?? msg.global_step),
+        learningRate: finiteOrNull(s.learning_rate),
+        broadcastEma: finiteOrNull(s.broadcast_ema),
+        stopReason: s.stop_reason ?? null,
+    };
+};
+
+// Keep memory bounded on very long runs; well above anything Recharts can
+// usefully draw anyway.
+const MAX_METRIC_POINTS = 5000;
+
+/**
+ * Create an accumulating metrics feed over the simulation socket.
+ *
+ * - Appends one point per "iteration" frame (replacing a point if the same
+ *   iteration is re-emitted, e.g. after a reconnect).
+ * - Clears itself when a "started" frame arrives (new run = fresh charts).
+ * - Notifies subscribers with a NEW array reference on every change, so it is
+ *   safe to hand straight to React state or useSyncExternalStore.
+ *
+ * Typical React usage:
+ *
+ *   const feed = useMemo(() => createMetricsFeed(), []);
+ *   useEffect(() => () => feed.destroy(), [feed]);
+ *   const metrics = useSyncExternalStore(feed.subscribe, feed.getMetrics, () => []);
+ *   return <GraficasContainer data={metrics} />;
+ *
+ * (or the singleton below if several components share one chart source)
+ *
+ * @param {object} [options]
+ * @param {number} [options.maxPoints] - cap on retained points (default 5000)
+ */
+export const createMetricsFeed = ({ maxPoints = MAX_METRIC_POINTS } = {}) => {
+    let metrics = [];
+    const subscribers = new Set();
+
+    const notify = () => subscribers.forEach((fn) => fn(metrics));
+
+    const unsubscribeSocket = onSimulationMessage((msg) => {
+        if (!msg || typeof msg !== 'object') return;
+
+        // New run → wipe the old curves.
+        if (msg.type === 'started') {
+            if (metrics.length) {
+                metrics = [];
+                notify();
+            }
+            return;
+        }
+
+        const point = toIterationMetrics(msg);
+        if (!point) return;
+
+        const lastPoint = metrics[metrics.length - 1];
+        if (lastPoint && lastPoint.iteration === point.iteration) {
+            // Same iteration re-emitted — replace instead of duplicating.
+            metrics = [...metrics.slice(0, -1), point];
+        } else {
+            metrics = [...metrics, point];
+        }
+        if (metrics.length > maxPoints) metrics = metrics.slice(-maxPoints);
+        notify();
+    });
+
+    return {
+        /** Current immutable snapshot (stable reference between changes). */
+        getMetrics: () => metrics,
+        /**
+         * Subscribe to changes. Listener is called immediately with the
+         * current snapshot, then on every new/updated point.
+         * @param {(metrics: object[]) => void} fn
+         * @returns {() => void} unsubscribe
+         */
+        subscribe: (fn) => {
+            subscribers.add(fn);
+            fn(metrics);
+            return () => subscribers.delete(fn);
+        },
+        /** Manually clear accumulated points (e.g. a "reset charts" button). */
+        clear: () => {
+            metrics = [];
+            notify();
+        },
+        /** Detach from the socket and drop all subscribers. */
+        destroy: () => {
+            unsubscribeSocket();
+            subscribers.clear();
+        },
+    };
+};
+
+// Lazy app-wide singleton: every chart in the app shares one accumulation of
+// the current run. Created on first use so importing dataProvider stays
+// side-effect free (important for SSR).
+let metricsFeed = null;
+
+/** @returns {ReturnType<typeof createMetricsFeed>} */
+export const getSimulationMetricsFeed = () => {
+    if (!metricsFeed) metricsFeed = createMetricsFeed();
+    return metricsFeed;
+};
+
 /**
  * Translate the nested camelCase config from PPOControls into the flat
  * snake_case shape that train.py / config.py expects (see _build_args in
@@ -619,6 +771,8 @@ const dataProvider = {
     // simulation (websocket)
     startSimulation, stopSimulation, applyAndRestart,
     onSimulationMessage, closeSimulationSocket,
+    // training metrics (charts)
+    toIterationMetrics, createMetricsFeed, getSimulationMetricsFeed,
 };
 
 export default dataProvider;
