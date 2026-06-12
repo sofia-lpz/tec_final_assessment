@@ -11,7 +11,7 @@ import {
   RefObject,
 } from "react";
 import { Canvas } from "@react-three/fiber";
-import { OrbitControls, Stars, Environment } from "@react-three/drei";
+import { OrbitControls, Environment } from "@react-three/drei";
 import * as THREE from "three";
 import { Group } from "three";
 import Planet from "@/components/Planet";
@@ -38,6 +38,54 @@ export type PlanetDef = {
 
 function gridKey(col: number, row: number) {
   return `${col},${row}`;
+}
+
+// ── Background starfield (non-attenuated points) ─────────────
+// drei's <Stars> uses size attenuation, so far stars collapse to
+// sub-pixel sizes and flicker as the camera moves them across sample
+// boundaries. We render our own points with sizeAttenuation={false} so
+// every star is a fixed N pixels regardless of distance — no flicker.
+function BackgroundStars({
+  count = 4000,
+  radius = 1000,
+  size = 1.5,
+}: {
+  count?: number;
+  radius?: number;
+  size?: number;
+}) {
+  const geometry = useMemo(() => {
+    const positions = new Float32Array(count * 3);
+    for (let i = 0; i < count; i++) {
+      // Uniform points on a spherical shell with slight thickness for depth.
+      const u = Math.random();
+      const v = Math.random();
+      const theta = 2 * Math.PI * u;
+      const phi = Math.acos(2 * v - 1);
+      const r = radius * (0.85 + Math.random() * 0.15);
+      positions[i * 3] = r * Math.sin(phi) * Math.cos(theta);
+      positions[i * 3 + 1] = r * Math.sin(phi) * Math.sin(theta);
+      positions[i * 3 + 2] = r * Math.cos(phi);
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+    return g;
+  }, [count, radius]);
+
+  useEffect(() => () => geometry.dispose(), [geometry]);
+
+  return (
+    <points geometry={geometry}>
+      <pointsMaterial
+        size={size}
+        sizeAttenuation={false}
+        color="#ffffff"
+        transparent
+        opacity={0.85}
+        depthWrite={false}
+      />
+    </points>
+  );
 }
 
 // ── Grid cells: deduplicated edge lattice ────────────────────
@@ -387,7 +435,8 @@ const SolarSystem = forwardRef<SolarSystemHandle, SolarSystemProps>(function Sol
       <Canvas camera={{ position: [0, CELL_SIZE * 14, 0.01], fov: 50, near: 0.1, far: 2000 }}>
         <Environment preset="night" />
         <ambientLight intensity={0.2} />
-        <Stars radius={300} depth={60} count={5000} factor={7} fade />
+        {/* Custom non-attenuated starfield — see BackgroundStars notes. */}
+        <BackgroundStars />
 
         <Suspense fallback={null}>
           <Scene
