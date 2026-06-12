@@ -233,20 +233,18 @@ export default function PPOControls() {
             APPLY & RESTART
           </button>
           
-          <div className="flex gap-2">
-            <button onClick={handleSaveClick} className="flex-1 flex items-center justify-center gap-2 py-1.5 border border-white/40 hover:bg-white/10 transition-colors text-[9px] tracking-widest">
-              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
-              </svg>
-              SAVE
-            </button>
-            <button onClick={handleLoadClick} className="flex-1 flex items-center justify-center gap-2 py-1.5 border border-white/40 hover:bg-white/10 transition-colors text-[9px] tracking-widest">
-              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
-              </svg>
-              LOAD
-            </button>
-          </div>
+          <button onClick={handleSaveClick} className="w-full py-2 border border-white/40 hover:bg-white/10 transition-colors text-xs tracking-widest flex items-center justify-center gap-2">
+            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
+            </svg>
+            SAVE
+          </button>
+          <button onClick={handleLoadClick} className="w-full py-2 border border-white/40 hover:bg-white/10 transition-colors text-xs tracking-widest flex items-center justify-center gap-2">
+            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+            </svg>
+            LOAD
+          </button>
         </div>
 
       </div>
