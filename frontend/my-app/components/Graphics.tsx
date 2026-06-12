@@ -171,9 +171,7 @@ export default function GraficasContainer({
 
   const sparklines = [
     { key: "policyLoss", label: "POLICY LOSS", color: COLORS.policyLoss },
-    { key: "valueLoss", label: "VALUE LOSS", color: COLORS.valueLoss },
     { key: "entropy", label: "ENTROPY", color: COLORS.entropy, entropy: true },
-    { key: "approxKL", label: "APPROX KL", color: COLORS.approxKL },
   ] as const;
 
   return (
@@ -230,54 +228,6 @@ export default function GraficasContainer({
               </LineChart>
             </ResponsiveContainer>
           </div>
-        </Panel>
-
-        {/* 2 — Per-broadcaster: steps from own broadcast to own death */}
-        <Panel
-          title="BROADCAST → BROADCASTER DEATH"
-          accent={COLORS.annihilation}
-          right={
-            <span className="text-[10px] sm:text-xs tabular-nums text-gray-200">
-              {fmt(latest?.timeToAnnihilation, 1)} steps · ema{" "}
-              {fmt(latest?.ttaEma, 1)}
-            </span>
-          }
-        >
-          <div className="h-36 sm:h-40 lg:h-48">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={metrics} margin={{ top: 5, right: 5, left: -10, bottom: 0 }}>
-                <CartesianGrid stroke={COLORS.grid} vertical={false} />
-                <XAxis dataKey="iteration" {...axisProps} />
-                <YAxis {...axisProps} width={32} />
-                <Tooltip {...tooltipStyle} />
-                <Line
-                  type="monotone"
-                  dataKey="timeToAnnihilation"
-                  name="STEPS TO DEATH (PER BROADCASTER)"
-                  stroke={COLORS.annihilation}
-                  strokeWidth={1.5}
-                  strokeOpacity={0.55}
-                  dot={{ r: 1.5, fill: COLORS.annihilation, strokeWidth: 0 }}
-                  connectNulls={false}
-                />
-                <Line
-                  type="monotone"
-                  dataKey="ttaEma"
-                  name="EMA"
-                  stroke="#fca5a5"
-                  strokeWidth={2}
-                  strokeDasharray="6 3"
-                  dot={false}
-                  connectNulls
-                />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-          <p className="mt-2 text-[9px] sm:text-[10px] tracking-wider text-gray-500">
-            Steps from a civ's first broadcast to its own death (mean per
-            iteration). Gaps: no broadcaster died. A falling EMA means the
-            hunters are answering faster.
-          </p>
         </Panel>
 
         {/* 3 — Average reward per episode */}
