@@ -330,7 +330,6 @@ export const scenarioToConfig = (row) => ({
         planets: Number(row.planets),
         harvestRate: Number(row.harvest_rate),
         initialResources: Number(row.initial_resources),
-        initialPopulation: Number(row.initial_population),
         maxSteps: Number(row.max_steps),
     },
     rewards: {
@@ -339,8 +338,6 @@ export const scenarioToConfig = (row) => ({
         conquer: Number(row.conquer_reward),
         colonize: Number(row.colonize_reward),
         survive: Number(row.survive_reward),
-        population: Number(row.population_reward),
-        science: Number(row.science_reward),
         explore: Number(row.explore_reward),
         invalid: Number(row.invalid_reward),
     },
@@ -676,7 +673,7 @@ const toServerConfig = (config) => {
     if (env.planets !== undefined) out.initial_planets = env.planets;
     if (env.harvestRate !== undefined) out.harvest_rate = env.harvestRate;
     if (env.initialResources !== undefined) out.initial_resources = env.initialResources;
-    if (env.initialPopulation !== undefined) out.initial_population = env.initialPopulation;
+    out.initial_population = 1; // population mechanic removed; dummy value satisfies backend
     if (env.maxSteps !== undefined) out.max_steps = env.maxSteps;
 
     // Rewards — keys already match the GROUP reward dict in rewards.py

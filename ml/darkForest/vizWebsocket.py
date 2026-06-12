@@ -50,6 +50,7 @@ from train import (
     A_BROADCAST,
     A_EXPLORE,
     N_NONTARGETED,
+    SELF_N_OWNED,                # index of "planets owned" in the self vector
 )
 from config import get_config, seed_everything
 from stopper import DarkForestStopper
@@ -194,12 +195,13 @@ def train_with_callbacks(args, on_iteration, stop_event):
         annihilations = []
         done_root = data["next", "done"].squeeze(-1)
         if done_root.any():
-            ep_rew    = data["next", GROUP, "episode_reward"].squeeze(-1)
-            next_pop  = data["next", GROUP, "observation", "self"][..., 0]
-            next_mask = data["next", GROUP, "mask"]
+            ep_rew     = data["next", GROUP, "episode_reward"].squeeze(-1)
+            next_owned = data["next", GROUP, "observation",
+                              "self"][..., SELF_N_OWNED]
+            next_mask  = data["next", GROUP, "mask"]
             for e, t in done_root.nonzero(as_tuple=False).tolist():
                 return_hist.append(float(ep_rew[e, t].mean()))
-                survivors = int(((next_pop[e, t] > 0) & next_mask[e, t]).sum())
+                survivors = int(((next_owned[e, t] > 0) & next_mask[e, t]).sum())
                 surv_hist.append(survivors)
                 annihilations.append(1.0 if survivors <= 1 else 0.0)
 

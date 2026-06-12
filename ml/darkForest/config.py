@@ -25,7 +25,6 @@ def parse_args(argv=None):
     p.add_argument("--max-steps", type=int, default=200)
     p.add_argument("--harvest-rate", type=float, default=0.1)
     p.add_argument("--initial-resources", type=float, default=50.0)
-    p.add_argument("--initial-population", type=float, default=10.0)
     p.add_argument("--reward", type=str, nargs="*", default=[],
                    help="override env reward weights, e.g. "
                         "--reward broadcast=0 destroyed=50 conquer=3")

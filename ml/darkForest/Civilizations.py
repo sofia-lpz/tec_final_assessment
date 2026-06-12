@@ -1,18 +1,12 @@
 from rewards import *
 
 class Civilization:
-    def __init__(self, env, name, coord,
-                 population, science, resources, birth_rate, death_rate, population_consumption,
-                 harvest_rate):
+    def __init__(self, env, name, coord, science, resources, harvest_rate):
         self.env = env
         self.name = name
-        self.coord = coord #planet coordinates
-        self.population = population
+        self.coord = coord  # planet coordinates
         self.science = science
         self.resources = resources
-        self.birth_rate = birth_rate
-        self.death_rate = death_rate
-        self.population_consumption = population_consumption
         self.harvest_rate = harvest_rate
         self.known_civilizations = []
         self.explored_cells = set()
@@ -31,53 +25,33 @@ class Civilization:
         return self.env.planet_at(coord)
 
     def _planets_of(self, civ):
-        return [p for p in self.env.planets if p.civilization is civ]
+        return [p for p in self.env.planets
+                if p.civilization is civ and not p.destroyed]
 
     def _wipe(self, civ):
-        civ.population = 0
         civ.alive = False
         for p in self.env.planets:
             if p.civilization is civ:
                 p.civilization = None
 
     @property
-    def strength(self):
-        return self.population + self.science + self.resources
-
-    @property
     def exploration_radius(self):
         return 1 + int(self.science // SCIENCE_PER_RANGE)
 
     def update(self):
+        owned = self._planets_of(self)
+
+        # a civilization dies when it owns no surviving planets
+        if not owned:
+            self._wipe(self)
+            return
+
         # Harvest resources from planets
         if self.harvest_rate:
-            income = sum(
-                self.harvest_rate * p.resources
-                for p in self.env.planets
-                if p.civilization is self and not p.destroyed
-            )
-            self.resources += income
+            self.resources += sum(self.harvest_rate * p.resources for p in owned)
 
-        # Update population based on birth and death rates, and consume resources
-        births = self.population * self.birth_rate
-        deaths = self.population * self.death_rate
-        self.population += births - deaths
-
-        # Passive research: population generates science every step
-        self.science += self.population * SCIENCE_PER_CAPITA
-
-        needed = self.population * self.population_consumption
-        self.resources -= needed
-
-        # starve if resources are insufficient
-        if self.resources < 0:
-            starved = min(self.population, -self.resources)
-            self.population -= starved
-            self.resources = 0
-
-        self.population = max(0, int(self.population))
-        if self.population <= 0:
-            self.alive = False
+        # Passive research: each owned planet generates science every step
+        self.science += len(owned) * SCIENCE_PER_PLANET
 
     def explore(self):
         radius = self.exploration_radius
@@ -150,16 +124,11 @@ class Civilization:
             return False
         self.resources -= CONQUER_COST
 
-        if self.strength > resident.strength:
-            # win: absorb part of their research, then seize the planet
-            gained = resident.science * CONQUER_SCIENCE_FRACTION
-            self.science += gained
-            resident.science -= gained
-            planet.civilization = self
-            if not self._planets_of(resident):
-                self._wipe(resident)
-            return True
-        else:
-            # lose: pay a population price for the failed invasion
-            self.population = max(0, int(self.population * 0.75))
-            return False
+        # first strike always wins: absorb part of their research, seize the planet
+        gained = resident.science * CONQUER_SCIENCE_FRACTION
+        self.science += gained
+        resident.science -= gained
+        planet.civilization = self
+        if not self._planets_of(resident):
+            self._wipe(resident)
+        return True
