@@ -1,5 +1,6 @@
 import jwt from 'jsonwebtoken';
 import * as Service from './service.js';
+import { logger } from '../utils/logger/logger.js';
 
 // Validation helper for Scenario required fields
 const validateScenarioData = (data) => {
@@ -25,11 +26,12 @@ export const login = async (req, res) => {
             const token = jwt.sign({ id: user.id, username: user.username, tokenVersion: user.token_version }, process.env.JWT_SECRET, { expiresIn: '1h' });
             const role = user.role;
             res.send({ status: "OK", token, role });
-            console.log(`User ${username} logged in`);
+            logger.info({ event: 'login_success', userId: user.id, ip: req.ip }, 'User logged in');
         }
     } catch (error) {
         if (error.message === 'User not found' || error.message === 'Invalid password') {
             res.status(401).send({ status: "Error", message: "Invalid credentials" });
+            logger.warn({ event: 'login_failure', username, ip: req.ip }, 'Failed login attempt');
         } else {
             console.error(error);
             res.status(500).send({ status: "Error", message: "Internal Server Error" });
@@ -52,6 +54,7 @@ export const logout = async (req, res) => {
     try {
         await Service.incrementTokenVersion(req.userId);
         res.send({ status: "OK", message: "Logged out"});
+        logger.info({ event: 'logout', userId: req.userId }, 'User logged out');
     } catch (error) {
         res.status(500).send({ status: "Error", message: "Internal Server Error"});
     }
@@ -95,6 +98,9 @@ export const updateUser = async (req, res) => {
         }
         const data = await Service.updateUser(req.params.id, req.body);
         res.json(data);
+        if (req.body.role) {
+            logger.info({ event: 'user_role_updated', updatedBy: req.userId, targetUserId: req.params.id, newRole: req.body.role }, 'Admin updated user role');
+        }
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
@@ -105,6 +111,7 @@ export const createUser = async (req, res) => {
         const { username, password, role } = req.body;
         const userId = await Service.createUser(username, password, role);
         res.json({ id: userId, username, role });
+        logger.info({ event: 'user_created', createdBy: req.userId, newUserId: userId, role }, 'Admin created user');
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
@@ -125,6 +132,7 @@ export const deleteUser = async (req, res) => {
             }
         }
         const data = await Service.deleteUser(req.params.id);
+        logger.info({ event: 'user_deleted', deletedBy: req.userId, deletedUserId: req.params.id }, 'Admin deleted user');
         res.json(data);
     } catch (error) {
         res.status(500).json({ error: error.message });
