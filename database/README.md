@@ -29,7 +29,6 @@ Stores the hyperparameters, map configurations, and reward structures for the mu
 * **conquer_reward** (float): Reward value for taking control of an enemy node.
 * **colonize_reward** (float): Reward value for establishing a presence on a neutral node.
 * **survive_reward** (float): Incremental reward granted per step survived.
-* **population_reward** (float): Reward multiplier tied to population growth metrics.
 * **science_reward** (float): Reward for technological or research advancements.
 * **explore_reward** (float): Reward for discovering unexplored areas of the map.
 * **invalid_reward** (float): Penalty for attempting actions outside the permissible action space.
@@ -39,6 +38,5 @@ Stores the hyperparameters, map configurations, and reward structures for the mu
 * **planets** (int): The number of habitable or interactable nodes generated in the map.
 * **harvest_rate** (float): The resource extraction multiplier per step.
 * **initial_resources** (int): The starting resource pool for each civilization.
-* **initial_population** (int): The starting agent count for each civilization.
 * **max_steps** (int): The absolute limit of steps before an episode terminates.
 * **critic** (enum): The specific reinforcement learning algorithm architecture designated for the scenario. Allowed values are 'IPPO' or 'MAPPO'.
