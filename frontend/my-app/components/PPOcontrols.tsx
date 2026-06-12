@@ -110,9 +110,11 @@ export default function PPOControls() {
   const handleSaveClick = () => setIsSaveModalOpen(true);
   const handleLoadClick = () => setIsModalOpen(true);
 
-  const executeSave = async (name: string, configToSave: ConfigState) => {
-    console.log(`Guardando simulación '${name}' en BD con config:`, configToSave);
-    alert(`SIMULATION '${name}' SAVED SUCCESSFULLY`);
+  // El modal ya persiste el escenario por su cuenta (dataProvider.createScenario).
+  // Este callback solo se dispara tras un guardado exitoso, por si el panel
+  // necesita reaccionar (p. ej. refrescar una lista de escenarios guardados).
+  const handleSaved = (created: unknown, name: string) => {
+    console.log(`Simulación '${name}' guardada en BD:`, created);
   };
 
   const applyLoadedConfig = (loadedConfig: any) => {
@@ -268,7 +270,7 @@ export default function PPOControls() {
       </div>
 
       <LoadSimulationModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onLoad={applyLoadedConfig} />
-      <SaveSimulationModal isOpen={isSaveModalOpen} onClose={() => setIsSaveModalOpen(false)} config={config} onSave={executeSave} />
+      <SaveSimulationModal isOpen={isSaveModalOpen} onClose={() => setIsSaveModalOpen(false)} config={config} onSaved={handleSaved} />
     </>
   );
 }
