@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 
 class ObsFlatten(nn.Module):
-    """[*, n_agents, C, H, W] map + [*, n_agents, 8] stats -> flat vector."""
+    """[*, n_agents, C, H, W] map + [*, n_agents, 5] stats -> flat vector."""
 
     def forward(self, map_t, self_t):
         flat = map_t.flatten(start_dim=-3)

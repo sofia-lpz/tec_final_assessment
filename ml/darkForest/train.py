@@ -36,7 +36,12 @@ from env import (  # noqa: E402
     A_EXPLORE,
     A_BROADCAST,
     N_NONTARGETED,
+    N_SELF_FEATURES,
 )
+
+# index of "planets owned" inside the self vector
+# (science, resources, n_owned, exploration_radius, n_known)
+SELF_N_OWNED = 2
 
 def make_base_env(args):
     return DarkForestParallelEnv(
@@ -44,7 +49,6 @@ def make_base_env(args):
         initial_planets=args.initial_planets, max_steps=args.max_steps,
         harvest_rate=args.harvest_rate,
         initial_resources=args.initial_resources,
-        initial_population=args.initial_population,
         reward_weights=args.reward_weights or None,
     )
 
@@ -166,21 +170,19 @@ def snapshot_civilizations(env: DarkForestParallelEnv):
     out = []
     for name in env.possible_agents:
         civ = env.civs[name]
+        owned = [p for p in env.planets
+                 if p.civilization is civ and not p.destroyed]
         out.append({
             "name": name,
             "alive": bool(civ.alive),
             "home_coord": [int(civ.coord[0]), int(civ.coord[1])],
-            "population": float(civ.population),
             "science": float(civ.science),
             "resources": float(civ.resources),
-            "birth_rate": float(civ.birth_rate),
-            "death_rate": float(civ.death_rate),
-            "population_consumption": float(civ.population_consumption),
             "harvest_rate": float(civ.harvest_rate),
-            "strength": float(civ.strength),
             "exploration_radius": int(civ.exploration_radius),
+            "n_owned_planets": len(owned),
             "owned_planets": [[int(p.coord[0]), int(p.coord[1])]
-                              for p in env.planets if p.civilization is civ],
+                              for p in owned],
             "known_civilizations": [c.name for c in civ.known_civilizations],
             "explored_cells": sorted([int(r), int(c)]
                                      for (r, c) in civ.explored_cells),
@@ -193,7 +195,7 @@ def _policy_actions(policy, env, obs, device, deterministic, action_dim):
     n = len(names)
     c_, h_, w_ = next(iter(obs.values()))["map"].shape if obs else (0, 0, 0)
     maps = torch.zeros((n, c_, h_, w_), dtype=torch.float32)
-    selfs = torch.zeros((n, 8), dtype=torch.float32)
+    selfs = torch.zeros((n, N_SELF_FEATURES), dtype=torch.float32)
     masks = torch.zeros((n, action_dim), dtype=torch.bool)
     masks[:, A_EXPLORE] = True  # placeholder for dead agents
     for i, name in enumerate(names):
@@ -312,12 +314,8 @@ def record_episode_stream(policy, args, device, action_dim,
             "episode_done": not env.agents,
         })
 
-    # Count survivors from the env directly. `next_pop`/`e`/`t` were a
-    # leftover reference to the training loop's scope and never existed here.
-    survivors = sum(
-        1 for name in env.possible_agents
-        if env.civs[name].alive and env.civs[name].population > 0
-    )
+    survivors = sum(1 for name in env.possible_agents
+                    if env.civs[name].alive)
     meta = {
         "width": env.width,
         "height": env.height,
@@ -419,12 +417,13 @@ def main():
         done_root = data["next", "done"].squeeze(-1)          # [E, T]
         if done_root.any():
             ep_rew = data["next", GROUP, "episode_reward"].squeeze(-1)  # [E,T,N]
-            next_pop = data["next", GROUP, "observation", "self"][..., 0]
+            next_owned = data["next", GROUP, "observation",
+                              "self"][..., SELF_N_OWNED]
             next_mask = data["next", GROUP, "mask"]
             idx = done_root.nonzero(as_tuple=False)
             for e, t in idx.tolist():
                 return_hist.append(float(ep_rew[e, t].mean()))
-                survivors = int(((next_pop[e, t] > 0) & next_mask[e, t]).sum())
+                survivors = int(((next_owned[e, t] > 0) & next_mask[e, t]).sum())
                 surv_hist.append(survivors)
                 annihilations.append(1.0 if survivors <= 1 else 0.0)
 

@@ -8,11 +8,11 @@ type ConfigState = {
   env: {
     civilizations: number; width: number; height: number;
     planets: number; harvestRate: number; initialResources: number;
-    initialPopulation: number; maxSteps: number;
+    maxSteps: number;
   };
   rewards: {
     broadcast: number; destroyed: number; conquer: number;
-    colonize: number; survive: number; population: number;
+    colonize: number; survive: number;
     science: number; explore: number; invalid: number;
   };
 };
@@ -38,7 +38,6 @@ const toScenarioPayload = (name: string, config: ConfigState) => ({
   planets: config.env.planets,
   harvest_rate: config.env.harvestRate,
   initial_resources: config.env.initialResources,
-  initial_population: config.env.initialPopulation,
   max_steps: config.env.maxSteps,
   // Rewards
   broadcast_reward: config.rewards.broadcast,
@@ -46,7 +45,6 @@ const toScenarioPayload = (name: string, config: ConfigState) => ({
   conquer_reward: config.rewards.conquer,
   colonize_reward: config.rewards.colonize,
   survive_reward: config.rewards.survive,
-  population_reward: config.rewards.population,
   science_reward: config.rewards.science,
   explore_reward: config.rewards.explore,
   invalid_reward: config.rewards.invalid,

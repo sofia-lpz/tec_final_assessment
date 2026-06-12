@@ -11,12 +11,12 @@ from Planets import Planet
 from rewards import *
 
 _MAP_CHANNELS = (
-    "explored",        
-    "empty_planet",    
-    "self_planet",     
-    "enemy_planet",    
-    "destroyed",       
-    "resources",      
+    "explored",
+    "empty_planet",
+    "self_planet",
+    "enemy_planet",
+    "destroyed",
+    "resources",
 )
 C = len(_MAP_CHANNELS)
 
@@ -24,6 +24,8 @@ C = len(_MAP_CHANNELS)
 A_EXPLORE, A_BROADCAST = 0, 1
 N_NONTARGETED = 2
 N_TARGETED_TYPES = 3  # colonize_empty, destroy, colonize_inhabited
+
+N_SELF_FEATURES = 5  # science, resources, n_owned, exploration_radius, n_known
 
 class DarkForestParallelEnv(ParallelEnv):
     metadata = {"render_modes": ["human", "ansi"], "name": "dark_forest_v0"}
@@ -35,13 +37,9 @@ class DarkForestParallelEnv(ParallelEnv):
         height: int = 20,
         initial_planets: int = 10,
         max_steps: int = 200,
-        initial_population: float = 10.0,
         initial_science: float = 0.0,
         initial_resources: float = 50.0,
         harvest_rate: float = 0.1,
-        birth_rate: float = 0.05,
-        death_rate: float = 0.02,
-        population_consumption: float = 0.1,
         reward_weights: dict | None = None,
         render_mode: str | None = None,
     ):
@@ -50,13 +48,9 @@ class DarkForestParallelEnv(ParallelEnv):
         self.height = int(height)
         self.initial_planets = int(initial_planets)
         self.max_steps = int(max_steps)
-        self.initial_population = float(initial_population)
         self.initial_science = float(initial_science)
         self.initial_resources = float(initial_resources)
         self.harvest_rate = float(harvest_rate)
-        self.birth_rate = float(birth_rate)
-        self.death_rate = float(death_rate)
-        self.population_consumption = float(population_consumption)
         self.render_mode = render_mode
 
         if self.initial_planets < len(self.possible_agents):
@@ -67,7 +61,7 @@ class DarkForestParallelEnv(ParallelEnv):
             )
 
         self.reward_weights = dict_reward_weights.copy()
-        
+
         if reward_weights:
             self.reward_weights.update(reward_weights)
 
@@ -77,7 +71,8 @@ class DarkForestParallelEnv(ParallelEnv):
         obs_space = spaces.Dict({
             "map": spaces.Box(0.0, 1.0, shape=(C, self.height, self.width),
                               dtype=np.float32),
-            "self": spaces.Box(0.0, np.inf, shape=(8,), dtype=np.float32),
+            "self": spaces.Box(0.0, np.inf, shape=(N_SELF_FEATURES,),
+                               dtype=np.float32),
             "action_mask": spaces.MultiBinary(self.action_dim),
         })
         act_space = spaces.Discrete(self.action_dim)
@@ -87,7 +82,8 @@ class DarkForestParallelEnv(ParallelEnv):
         n = len(self.possible_agents)
         self._state_map_channels = 3 + n  # present, destroyed, resources, owner-onehot*n
         self._state_dim = (
-            self._state_map_channels * self.n_cells + 9 * n  # 8 stats + alive flag
+            self._state_map_channels * self.n_cells
+            + (N_SELF_FEATURES + 1) * n  # self features + alive flag
         )
         self.state_space = spaces.Box(0.0, np.inf, shape=(self._state_dim,),
                                       dtype=np.float32)
@@ -135,7 +131,7 @@ class DarkForestParallelEnv(ParallelEnv):
         ]
         self.planet_by_coord = {p.coord: p for p in self.planets}
 
-        # one civ per planet cell 
+        # one civ per planet cell
         home_idx = self.rng.choice(len(planet_coords),
                                    size=len(self.possible_agents), replace=False)
         self.civs = {}
@@ -144,12 +140,8 @@ class DarkForestParallelEnv(ParallelEnv):
                 env=self,
                 name=name,
                 coord=planet_coords[home_idx[k]],
-                population=self.initial_population,
                 science=self.initial_science,
                 resources=self.initial_resources,
-                birth_rate=self.birth_rate,
-                death_rate=self.death_rate,
-                population_consumption=self.population_consumption,
                 harvest_rate=self.harvest_rate,
             )
 
@@ -158,12 +150,11 @@ class DarkForestParallelEnv(ParallelEnv):
         return observations, infos
 
     def step(self, actions):
-        acting = list(self.agents)          
+        acting = list(self.agents)
         self.rng.shuffle(acting)
 
         rewards = {a: 0.0 for a in self.agents}
-        before = {a: (self.civs[a].population, self.civs[a].science)
-                  for a in self.agents}
+        before = {a: self.civs[a].science for a in self.agents}
         w = self.reward_weights
 
         for name in acting:
@@ -180,9 +171,8 @@ class DarkForestParallelEnv(ParallelEnv):
         alive_after = 0
         for name in self.agents:
             civ = self.civs[name]
-            d_pop = civ.population - before[name][0]
-            d_sci = civ.science - before[name][1]
-            rewards[name] += w["population"] * d_pop + w["science"] * d_sci
+            d_sci = civ.science - before[name]
+            rewards[name] += w["science"] * d_sci
             if civ.alive:
                 rewards[name] += w["survive"]
                 alive_after += 1
@@ -271,13 +261,11 @@ class DarkForestParallelEnv(ParallelEnv):
         return m
 
     def _self_vector(self, civ):
-        n_owned = sum(1 for p in self.planets if p.civilization is civ)
+        n_owned = sum(1 for p in self.planets
+                      if p.civilization is civ and not p.destroyed)
         return np.array([
-            max(civ.population, 0.0),
             max(civ.science, 0.0),
             max(civ.resources, 0.0),
-            civ.birth_rate,
-            civ.death_rate,
             float(n_owned),
             float(civ.exploration_radius),
             float(len(civ.known_civilizations)),
@@ -338,8 +326,10 @@ class DarkForestParallelEnv(ParallelEnv):
         lines = [" ".join(row) for row in grid]
         for name in self.possible_agents:
             civ = self.civs[name]
+            n_owned = sum(1 for p in self.planets
+                          if p.civilization is civ and not p.destroyed)
             lines.append(
-                f"{name}: alive={civ.alive} pop={civ.population} "
+                f"{name}: alive={civ.alive} planets={n_owned} "
                 f"sci={civ.science:.0f} res={civ.resources:.0f} "
                 f"radius={civ.exploration_radius}"
             )

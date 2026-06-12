@@ -10,11 +10,11 @@ type ConfigState = {
   env: {
     civilizations: number; width: number; height: number;
     planets: number; harvestRate: number; initialResources: number;
-    initialPopulation: number; maxSteps: number;
+    maxSteps: number;
   };
   rewards: {
     explore: number; broadcast: number; survive: number;
-    population: number; science: number; colonize: number;
+    science: number; colonize: number;
     conquer: number; destroy: number; destroyed: number;
     win: number; invalid: number;
   };
@@ -78,11 +78,11 @@ export default function PPOControls() {
     env: {
       civilizations: 3, width: 20, height: 20,
       planets: 10, harvestRate: 0.1, initialResources: 50,
-      initialPopulation: 10, maxSteps: 200
+      maxSteps: 200
     },
     rewards: {
       explore: 0.1, broadcast: 0.5, survive: 0.1,
-      population: 0.0, science: 0.01, colonize: 1.0,
+      science: 0.01, colonize: 1.0,
       conquer: 20.0, destroy: 4.0, destroyed: 30.0,
       win: 25.0, invalid: 0.0
     }
@@ -220,7 +220,7 @@ export default function PPOControls() {
                 { label: "AGENTS", key: "civilizations" }, { label: "STEPS", key: "maxSteps" },
                 { label: "WIDTH", key: "width" }, { label: "HEIGHT", key: "height" },
                 { label: "PLANETS", key: "planets" }, { label: "HARVEST RATE", key: "harvestRate" },
-                { label: "INIT RES", key: "initialResources" }, { label: "INIT POP", key: "initialPopulation" }
+                { label: "INIT RES", key: "initialResources" }
               ].map(item => (
                 <div key={item.key} className="flex flex-col gap-1">
                   <label className="text-xs text-gray-400 tracking-wider truncate">{item.label}</label>
