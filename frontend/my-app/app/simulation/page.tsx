@@ -5,6 +5,7 @@ import PPOControls from "@/components/PPOcontrols";
 import GraficasContainer from "@/components/Graphics";
 import Header from "@/components/Header";
 import Galaxy from "@/components/Galaxy";
+import Footer from "@/components/Footer";
 
 // Optimizamos renderizado
 const SolarSystemMemo = React.memo(Galaxy);
@@ -42,6 +43,7 @@ export default function SimulationPage() {
              
         </div>
       </main>
+      <Footer />
     </>
   );
 }
