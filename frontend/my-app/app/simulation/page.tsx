@@ -1,39 +1,18 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React from "react";
 import PPOControls from "@/components/PPOcontrols";
 import GraficasContainer from "@/components/Graphics";
 import Header from "@/components/Header";
 import Galaxy from "@/components/Galaxy";
 import Footer from "@/components/Footer";
 import PlanetStatesSection from "@/components/PlanetStatesSection";
-import { getToken } from "../../utils/dataProvider.js";
 
 // Optimizamos renderizado
 const SolarSystemMemo = React.memo(Galaxy);
 const GraphicsMemo = React.memo(GraficasContainer);
 
 export default function SimulationPage() {
-  // null  = still checking
-  // false = not authenticated → redirect
-  // true  = authenticated → render
-  const [authed, setAuthed] = useState<boolean | null>(null);
-
-  useEffect(() => {
-    // getToken() reads from localStorage (client-only).
-    // We defer to useEffect so this never runs on the server.
-    const token = getToken();
-    if (!token) {
-      // No valid session — send to login immediately.
-      window.location.replace("/");
-    } else {
-      setAuthed(true);
-    }
-  }, []);
-
-  // Blank screen while the check runs (avoids a flash of protected content).
-  if (!authed) return null;
-
   return (
     <>
       <Header />
@@ -43,6 +22,7 @@ export default function SimulationPage() {
         <div className="flex flex-col gap-4 sm:gap-6 w-full">
              
              {/* FILA SUPERIOR: Simulación + Controles */}
+             {/* CAMBIO CLAVE: lg:min-h-[65vh] fue reemplazado por lg:h-[70vh] */}
              <div className="flex flex-col lg:flex-row gap-4 sm:gap-6 w-full min-h-[50vh] lg:h-[70vh]">
                  
                  {/* Galaxy */}
@@ -51,6 +31,7 @@ export default function SimulationPage() {
                  </div>
 
                  {/* PPOControls */}
+                 {/* El h-full ahora obedecerá el límite estricto de 70vh del padre */}
                  <div className="w-full lg:w-80 xl:w-96 shrink-0 h-full max-h-full">
                    <PPOControls />
                  </div>
