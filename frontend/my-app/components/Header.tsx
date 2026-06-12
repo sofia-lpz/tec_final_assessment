@@ -1,12 +1,26 @@
 "use client";
 
-export default function Header({ children }: { children: React.ReactNode }) {
+import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
+
+export default function Header() {
+  const pathname = usePathname();
+  const router = useRouter();
+
   const handleSignOut = () => {
-    // Sobreescribimos la cookie con una fecha que ya pasó (1970) para que el navegador la elimine
     document.cookie = "authToken=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+    router.push("/");
+    router.refresh();
+  };
+
+  const getNavStyle = (path: string) => {
+    const isActive = pathname === path;
     
-    // Redirigimos al inicio (Login)
-    window.location.href = "/";
+    return `text-[9px] sm:text-[10px] md:text-xs px-3 py-1.5 sm:px-4 sm:py-2 transition-all tracking-widest border ${
+      isActive 
+        ? "bg-white text-black border-white font-bold" 
+        : "text-white/70 hover:text-white border-white/20 hover:border-white"
+    }`;
   };
 
   return (
@@ -20,17 +34,27 @@ export default function Header({ children }: { children: React.ReactNode }) {
         </h1>
       </div>
 
-      {/* Actualizamos este contenedor para que tenga los children y el botón */}
-      <div className="flex-1 flex justify-end items-center gap-4 sm:gap-6">
-        {children}
+      <div className="flex-1 flex justify-end items-center gap-3 sm:gap-4">
+        
+        <Link href="/simulation" className={getNavStyle("/simulation")}>
+          SIMULATION
+        </Link>
+        
+        <Link href="/theory" className={getNavStyle("/theory")}>
+          THEORY
+        </Link>
+        
+        <div className="w-px h-6 bg-white/20 hidden sm:block mx-1"></div>
+        
         <button 
           onClick={handleSignOut}
-          className="text-[9px] sm:text-[10px] md:text-xs text-white/70 hover:text-white border border-white/20 hover:border-white px-3 py-1.5 sm:px-4 sm:py-2 transition-all tracking-widest"
+          className="text-[9px] sm:text-[10px] md:text-xs text-white/70 border border-white/20 px-3 py-1.5 sm:px-4 sm:py-2 transition-all duration-300 tracking-widest hover:bg-red-900/80 hover:text-white hover:border-red-500"
         >
           SIGN OUT
         </button>
+        
       </div>
-      
+
     </header>
   );
 }
