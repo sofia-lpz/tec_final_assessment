@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import LoadSimulationModal from "./LoadSimulation";
 import SaveSimulationModal from "./SaveSimulation";
+import { applyAndRestart, ApiError } from "../utils/dataProvider"; // adjust path to where dataProvider.js lives
 
 type ConfigState = {
   ppo: { learningRate: number; gamma: number; critic: "IPPO" | "MAPPO" };
@@ -91,8 +92,21 @@ export default function PPOControls() {
   const [openSection, setOpenSection] = useState<"ppo" | "env" | "rewards" | "">("ppo");
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSaveModalOpen, setIsSaveModalOpen] = useState(false);
+  const [applyStatus, setApplyStatus] = useState<"idle" | "sending" | "sent" | "error">("idle");
+  const [applyError, setApplyError] = useState<string | null>(null);
 
-  const handleApply = () => console.log("Applying to simulation:", config);
+  const handleApply = async () => {
+    setApplyStatus("sending");
+    setApplyError(null);
+    try {
+      await applyAndRestart(config);
+      setApplyStatus("sent");
+      setTimeout(() => setApplyStatus("idle"), 2000);
+    } catch (err) {
+      setApplyStatus("error");
+      setApplyError(err instanceof ApiError ? err.message : "Failed to send configuration");
+    }
+  };
   const handleSaveClick = () => setIsSaveModalOpen(true);
   const handleLoadClick = () => setIsModalOpen(true);
 
@@ -225,13 +239,17 @@ export default function PPOControls() {
 
         {/* Footer más compacto */}
         <div className="mt-3 pt-3 border-t border-white/20 shrink-0 flex flex-col gap-2">
-          <button onClick={handleApply} className="w-full py-2 border border-white hover:bg-white hover:text-black text-[10px] sm:text-xs font-semibold tracking-widest transition-all duration-300 flex items-center justify-center gap-2">
+          <button onClick={handleApply} disabled={applyStatus === "sending"}
+            className="w-full py-2 border border-white hover:bg-white hover:text-black disabled:opacity-50 disabled:cursor-wait text-[10px] sm:text-xs font-semibold tracking-widest transition-all duration-300 flex items-center justify-center gap-2">
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
-            APPLY & RESTART
+            {applyStatus === "sending" ? "SENDING..." : applyStatus === "sent" ? "SENT ✓" : "APPLY & RESTART"}
           </button>
+          {applyStatus === "error" && applyError && (
+            <p className="text-[10px] tracking-wider text-red-400 text-center">{applyError}</p>
+          )}
           
           <button onClick={handleSaveClick} className="w-full py-2 border border-white/40 hover:bg-white/10 transition-colors text-xs tracking-widest flex items-center justify-center gap-2">
             <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
