@@ -17,7 +17,7 @@ const MIN_STEP_MS = 50;
 const MAX_STEP_MS = 2000;
 // Minimum buffered steps before the Play button is enabled.
 // Gives the buffer a head start so playback doesn't immediately stall.
-const MIN_BUFFER_TO_PLAY = 5;
+const MIN_BUFFER_TO_PLAY = 200;
 // Palette assigned to civilizations in the order they arrive.
 const CIV_PALETTE = [
   "#22c55e", // green
@@ -83,19 +83,20 @@ function coordKey(r: number, c: number) {
 /**
  * Compute the visual state for a planet at a given simulation step.
  *
- * Currently:
- *   - If the planet's owner broadcast this step → "transmitting"
- *   - Otherwise → "none"
- *
- * Extend here when adding other states (destroy, scienceplus, …).
+ * Priority (highest first):
+ *   - "transmitting"  — owner broadcast this step (active action)
+ *   - "scienceplus"   — owner explored this step (research pulse)
+ *   - "none"
  */
 function planetStateFor(
   planet: ServerPlanet,
   step: StepMsg | null,
-  broadcasters: Set<string>
+  broadcasters: Set<string>,
+  explorers: Set<string>
 ): PlanetState {
   if (!step) return "none";
   if (planet.owner && broadcasters.has(planet.owner)) return "transmitting";
+  if (planet.owner && explorers.has(planet.owner)) return "scienceplus";
   return "none";
 }
 // ── Galaxy ───────────────────────────────────────────────────
@@ -207,6 +208,17 @@ export default function Galaxy() {
     }
     return s;
   }, [currentStep]);
+  // ── Derived: who explored this step ────────────────────────
+  // Mirrors `broadcasters`: build a set of civ names whose action this
+  // step was "explore". Their owned planets get the scienceplus pulse.
+  const explorers = useMemo<Set<string>>(() => {
+    const s = new Set<string>();
+    if (!currentStep?.actions) return s;
+    for (const [name, action] of Object.entries(currentStep.actions)) {
+      if (action?.type === "explore") s.add(name);
+    }
+    return s;
+  }, [currentStep]);
   // ── Iteration boundary: refresh planet layout ──────────────
   // Within an iteration, planet positions are static — we lock them into
   // `initialPlanets` so `planetDefs` can look up live owner/state by
@@ -228,7 +240,7 @@ export default function Galaxy() {
     }
     return initialPlanets.map((p) => {
       const live = liveByCoord.get(coordKey(p.coord[0], p.coord[1])) ?? p;
-      const state = planetStateFor(live, currentStep, broadcasters);
+      const state = planetStateFor(live, currentStep, broadcasters, explorers);
       return {
         name: "neptune",
         grid: coordToGrid(p.coord),
@@ -236,7 +248,7 @@ export default function Galaxy() {
         state,
       };
     });
-  }, [initialPlanets, currentStep, broadcasters]);
+  }, [initialPlanets, currentStep, broadcasters, explorers]);
   // ── Paint civ-owned cells from the CURRENT displayed step ──
   useEffect(() => {
     const handle = solarRef.current;
