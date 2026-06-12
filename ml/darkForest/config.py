@@ -19,8 +19,8 @@ def parse_args(argv=None):
     p.add_argument("--names", type=str, nargs="+",
                    default=["Santi", "earth", "aliens"],
                    help="civilization names; count = number of agents")
-    p.add_argument("--width", type=int, default=20)
-    p.add_argument("--height", type=int, default=20)
+    p.add_argument("--width", type=int, default=10)    # match the cleanrl run
+    p.add_argument("--height", type=int, default=10)   # match the cleanrl run
     p.add_argument("--initial-planets", type=int, default=8)
     p.add_argument("--max-steps", type=int, default=200)
     p.add_argument("--harvest-rate", type=float, default=0.1)

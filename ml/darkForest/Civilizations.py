@@ -6,7 +6,7 @@ class Civilization:
                  harvest_rate):
         self.env = env
         self.name = name
-        self.coord = coord #planet coordinates
+        self.coord = coord  # planet coordinates
         self.population = population
         self.science = science
         self.resources = resources
@@ -23,7 +23,7 @@ class Civilization:
         if home is not None and not home.destroyed and home.civilization is None:
             home.civilization = self
 
-#helpers
+# helpers
     def _all_civilizations(self):
         return [c for c in self.env.civs.values() if c is not self and c.alive]
 
@@ -90,13 +90,14 @@ class Civilization:
         return newly
 
     def broadcast_position(self):
-        # TODO: maybe reward even when fc
         newly_reached = 0
         for civ in self._all_civilizations():
             if self not in civ.known_civilizations:
                 civ.known_civilizations.append(self)
                 newly_reached += 1
-            civ.explored_cells.add(self.coord)
+            civ.explored_cells.add(self.coord)   # they learn where YOU are
+            # (deleted) self.explored_cells.add(civ.coord)
+            # (deleted) self.known_civilizations.append(civ)
         self.science += newly_reached * SCIENCE_PER_BROADCAST
         return newly_reached
 
@@ -147,16 +148,13 @@ class Civilization:
             return False
         self.resources -= CONQUER_COST
 
-        if self.strength > resident.strength:
-            # win: absorb part of their research, then seize the planet
-            gained = resident.science * CONQUER_SCIENCE_FRACTION
-            self.science += gained
-            resident.science -= gained
-            planet.civilization = self
-            if not self._planets_of(resident):
-                self._wipe(resident)
-            return True
-        else:
-            # lose: pay a population price for the failed invasion
-            self.population = max(0, int(self.population * 0.75))
-            return False
+        # Dark-forest axiom: whoever strikes first wins. No strength check —
+        # if you know where they live and can pay the (cheap) cost, the
+        # invasion succeeds and you absorb part of their research.
+        gained = resident.science * CONQUER_SCIENCE_FRACTION
+        self.science += gained
+        resident.science -= gained
+        planet.civilization = self
+        if not self._planets_of(resident):
+            self._wipe(resident)
+        return True

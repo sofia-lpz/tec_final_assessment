@@ -11,12 +11,12 @@ from Planets import Planet
 from rewards import *
 
 _MAP_CHANNELS = (
-    "explored",        
-    "empty_planet",    
-    "self_planet",     
-    "enemy_planet",    
-    "destroyed",       
-    "resources",      
+    "explored",
+    "empty_planet",
+    "self_planet",
+    "enemy_planet",
+    "destroyed",
+    "resources",
 )
 C = len(_MAP_CHANNELS)
 
@@ -39,9 +39,11 @@ class DarkForestParallelEnv(ParallelEnv):
         initial_science: float = 0.0,
         initial_resources: float = 50.0,
         harvest_rate: float = 0.1,
-        birth_rate: float = 0.05,
-        death_rate: float = 0.02,
-        population_consumption: float = 0.1,
+        # cleanrl population dynamics: explosive growth + heavy consumption,
+        # so unmanaged civs starve — survival itself is a problem to solve
+        birth_rate: float = 1.0,
+        death_rate: float = 0.5,
+        population_consumption: float = 0.4,
         reward_weights: dict | None = None,
         render_mode: str | None = None,
     ):
@@ -67,7 +69,7 @@ class DarkForestParallelEnv(ParallelEnv):
             )
 
         self.reward_weights = dict_reward_weights.copy()
-        
+
         if reward_weights:
             self.reward_weights.update(reward_weights)
 
@@ -135,7 +137,7 @@ class DarkForestParallelEnv(ParallelEnv):
         ]
         self.planet_by_coord = {p.coord: p for p in self.planets}
 
-        # one civ per planet cell 
+        # one civ per planet cell
         home_idx = self.rng.choice(len(planet_coords),
                                    size=len(self.possible_agents), replace=False)
         self.civs = {}
@@ -158,13 +160,25 @@ class DarkForestParallelEnv(ParallelEnv):
         return observations, infos
 
     def step(self, actions):
-        acting = list(self.agents)          
+        acting = list(self.agents)
         self.rng.shuffle(acting)
 
         rewards = {a: 0.0 for a in self.agents}
         before = {a: (self.civs[a].population, self.civs[a].science)
                   for a in self.agents}
         w = self.reward_weights
+
+        # Snapshot which civs are alive before any action this step so we can
+        # later classify deaths by cause.
+        alive_before: set[str] = {
+            a for a in self.agents if self.civs[a].alive
+        }
+
+        # Sets populated by _apply_action to record hostile kill events.
+        # conquered:        civ whose home planet was taken via colonize_inhabited.
+        # planet_destroyed: civ whose home planet was razed via destroy_planet.
+        self._conquered_this_step: set[str] = set()
+        self._planet_destroyed_this_step: set[str] = set()
 
         for name in acting:
             civ = self.civs[name]
@@ -180,6 +194,7 @@ class DarkForestParallelEnv(ParallelEnv):
         alive_after = 0
         for name in self.agents:
             civ = self.civs[name]
+            # cleanrl semantics: raw signed deltas of population and science
             d_pop = civ.population - before[name][0]
             d_sci = civ.science - before[name][1]
             rewards[name] += w["population"] * d_pop + w["science"] * d_sci
@@ -201,8 +216,40 @@ class DarkForestParallelEnv(ParallelEnv):
             truncations[name] = bool(truncate)
 
         observations = {a: self._observe(a) for a in self.agents}
-        infos = {a: {} for a in self.agents}
         rewards = {a: float(rewards[a]) for a in self.agents}
+
+        # ------------------------------------------------------------------ #
+        # Death-cause classification
+        # A civ that was alive before and is dead now died from exactly one of:
+        #   conquered:        its home planet was seized by colonize_inhabited.
+        #   planet_destroyed: its home planet was razed by destroy_planet.
+        #   starved:          neither hostile action — population reached zero.
+        # If multiple causes coincide (e.g. simultaneous starvation + attack)
+        # we attribute to the hostile cause (conquered > planet_destroyed >
+        # starved), matching the kill-counting convention in train.py.
+        # ------------------------------------------------------------------ #
+        newly_dead: set[str] = {
+            a for a in alive_before if not self.civs[a].alive
+        }
+        n_conquered = len(newly_dead & self._conquered_this_step)
+        n_planet_destroyed = len(
+            (newly_dead & self._planet_destroyed_this_step)
+            - self._conquered_this_step   # don't double-count
+        )
+        n_starved = len(
+            newly_dead
+            - self._conquered_this_step
+            - self._planet_destroyed_this_step
+        )
+
+        # Broadcast a single aggregate info dict to every agent (uniform
+        # across agents so the trainer can read it from any one of them).
+        step_death_info = {
+            "starved":          n_starved,
+            "conquered":        n_conquered,
+            "planet_destroyed": n_planet_destroyed,
+        }
+        infos = {a: step_death_info for a in self.agents}
 
         self.agents = [
             a for a in self.agents
@@ -231,12 +278,30 @@ class DarkForestParallelEnv(ParallelEnv):
             ok = civ.colonize_empty_planet(coord)
             rewards[civ.name] += w["colonize"] if ok else -w["invalid"]
         elif ttype == 1:
+            planet = self.planet_at(coord)
+            former = planet.civilization if planet is not None else None
             ok = civ.destroy_planet(coord)
+<<<<<<< Updated upstream
             if not ok:
                 rewards[civ.name] -= w["invalid"]
+=======
+            hostile = ok and former is not None and former is not civ
+            rewards[civ.name] += w["destroy"] if hostile else (-w["invalid"] if not ok else 0.0)
+            # Record if the destroyed planet was the victim's home planet.
+            # (home planet == the coord the civ was initialised on, stored as
+            #  civ.coord.  If the civ is now homeless / dead, its coord still
+            #  holds the original value.)
+            if hostile and former.coord == coord:
+                self._planet_destroyed_this_step.add(former.name)
+>>>>>>> Stashed changes
         else:
+            planet = self.planet_at(coord)
+            former = planet.civilization if planet is not None else None
             ok = civ.colonize_inhabited_planet(coord)
             rewards[civ.name] += w["conquer"] if ok else -w["invalid"]
+            # Record if the conquered planet was the victim's home planet.
+            if ok and former is not None and former is not civ and former.coord == coord:
+                self._conquered_this_step.add(former.name)
 
     def _observe(self, name):
         civ = self.civs[name]

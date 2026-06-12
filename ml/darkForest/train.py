@@ -18,14 +18,12 @@ try:  # torchrl >= 0.10 renamed SyncDataCollector -> Collector
     from torchrl.collectors import Collector as SyncDataCollector
 except ImportError:
     from torchrl.collectors import SyncDataCollector
-from torchrl.data import LazyTensorStorage, ReplayBuffer
-from torchrl.data.replay_buffers.samplers import SamplerWithoutReplacement
 from torchrl.envs import RewardSum, StepCounter, TransformedEnv
 from torchrl.envs.batched_envs import ParallelEnv
 from torchrl.envs.libs.pettingzoo import PettingZooWrapper
 from torchrl.envs.utils import ExplorationType, MarlGroupMapType, set_exploration_type
 from torchrl.modules import MaskedCategorical, MultiAgentMLP, ProbabilisticActor
-from torchrl.objectives import ClipPPOLoss, ValueEstimators
+from torchrl.objectives.value import GAE
 
 from config import get_config, seed_everything
 from rewards import *
@@ -162,13 +160,48 @@ def snapshot_planets(env: DarkForestParallelEnv):
         for p in env.planets
     ]
 
-def snapshot_civilizations(env: DarkForestParallelEnv):
+
+def _civs_killed_this_step(
+    env: DarkForestParallelEnv,
+    acting: dict[str, int],
+    alive_before: set,
+) -> set:
+    coord_to_name: dict = {
+        (env.civs[n].coord[0], env.civs[n].coord[1]): n
+        for n in env.possible_agents
+    }
+
+    attacked_coords: set = set()
+    for actor, action in acting.items():
+        decoded = decode_action(env, action)
+        if decoded["type"] == "colonize_inhabited" and decoded["target"] is not None:
+            attacked_coords.add((decoded["target"][0], decoded["target"][1]))
+
+    killed: set = set()
+    for name in env.possible_agents:
+        civ = env.civs[name]
+        if (
+            name in alive_before
+            and not civ.alive
+            and (civ.coord[0], civ.coord[1]) in attacked_coords
+        ):
+            killed.add(name)
+    return killed
+
+
+def snapshot_civilizations(
+    env: DarkForestParallelEnv,
+    killed_this_step: set | None = None,
+):
+    if killed_this_step is None:
+        killed_this_step = set()
     out = []
     for name in env.possible_agents:
         civ = env.civs[name]
         out.append({
             "name": name,
             "alive": bool(civ.alive),
+            "killed": name in killed_this_step,
             "home_coord": [int(civ.coord[0]), int(civ.coord[1])],
             "population": float(civ.population),
             "science": float(civ.science),
@@ -219,9 +252,6 @@ def _policy_actions(policy, env, obs, device, deterministic, action_dim):
 
 def record_episode(policy, args, device, action_dim, out_path,
                    seed=None, deterministic=False):
-    """Play one episode with the current policy on a fresh env and dump a
-    JSON file with everything a renderer needs: per-step planets,
-    civilizations (full attributes) and the decoded action of each civ."""
     env = make_base_env(args)
     obs, _ = env.reset(seed=seed)
 
@@ -233,20 +263,28 @@ def record_episode(policy, args, device, action_dim, out_path,
         "civilizations": snapshot_civilizations(env),
     }]
     step = 0
+    total_killed = 0
+
     while env.agents:
+        alive_before = {n for n in env.possible_agents if env.civs[n].alive}
         all_actions = _policy_actions(policy, env, obs, device,
                                       deterministic, action_dim)
         acting = {n: all_actions[n] for n in env.agents}
         obs, rewards, terms, truncs, _ = env.step(acting)
         step += 1
+
+        killed = _civs_killed_this_step(env, acting, alive_before)
+        total_killed += len(killed)
+
         frames.append({
             "step": step,
             "actions": {n: decode_action(env, a) for n, a in acting.items()},
             "rewards": {n: float(r) for n, r in rewards.items()},
             "terminations": {n: bool(t) for n, t in terms.items()},
             "truncations": {n: bool(t) for n, t in truncs.items()},
+            "killed": sorted(killed),
             "planets": snapshot_planets(env),
-            "civilizations": snapshot_civilizations(env),
+            "civilizations": snapshot_civilizations(env, killed_this_step=killed),
         })
 
     survivors = sum(1 for c in env.civs.values() if c.alive)
@@ -259,6 +297,7 @@ def record_episode(policy, args, device, action_dim, out_path,
             "episode_length": step,
             "survivors": survivors,
             "annihilation": survivors <= 1,
+            "total_killed": total_killed,
             "seed": seed,
             "deterministic": deterministic,
         },
@@ -272,47 +311,55 @@ def record_episode(policy, args, device, action_dim, out_path,
 
 def record_episode_stream(policy, args, device, action_dim,
                           on_step, seed=None, deterministic=False):
-    """
-    Like record_episode but streams frames live via on_step(frame) instead of
-    accumulating them.  on_step receives the same dict that record_episode puts
-    in frames[], plus a "meta" key on the final frame once the episode ends.
-
-    Returns the episode meta dict (same as record_episode).
-    """
     env = make_base_env(args)
     obs, _ = env.reset(seed=seed)
 
-    # Step 0 – initial board state before any action
     on_step({
         "step": 0,
         "actions": {},
         "rewards": {},
         "terminations": {},
         "truncations": {},
+        "killed": [],
         "planets": snapshot_planets(env),
         "civilizations": snapshot_civilizations(env),
         "episode_done": False,
     })
 
     step = 0
+    total_killed = 0
+
     while env.agents:
+        alive_before = {n for n in env.possible_agents if env.civs[n].alive}
         all_actions = _policy_actions(policy, env, obs, device,
                                       deterministic, action_dim)
         acting = {n: all_actions[n] for n in env.agents}
         obs, rewards, terms, truncs, _ = env.step(acting)
         step += 1
+
+        killed = _civs_killed_this_step(env, acting, alive_before)
+        total_killed += len(killed)
+
         on_step({
             "step": step,
             "actions": {n: decode_action(env, a) for n, a in acting.items()},
             "rewards": {n: float(r) for n, r in rewards.items()},
             "terminations": {n: bool(t) for n, t in terms.items()},
             "truncations": {n: bool(t) for n, t in truncs.items()},
+            "killed": sorted(killed),
             "planets": snapshot_planets(env),
-            "civilizations": snapshot_civilizations(env),
+            "civilizations": snapshot_civilizations(env, killed_this_step=killed),
             "episode_done": not env.agents,
         })
 
+<<<<<<< Updated upstream
     survivors = int((next_pop[e, t] > 0).sum())
+=======
+    survivors = sum(
+        1 for name in env.possible_agents
+        if env.civs[name].alive and env.civs[name].population > 0
+    )
+>>>>>>> Stashed changes
     meta = {
         "width": env.width,
         "height": env.height,
@@ -321,11 +368,109 @@ def record_episode_stream(policy, args, device, action_dim,
         "episode_length": step,
         "survivors": survivors,
         "annihilation": survivors <= 1,
+        "total_killed": total_killed,
         "seed": seed,
         "deterministic": deterministic,
     }
     env.close()
     return meta
+
+
+def ppo_update(args, policy, critic, optimizer, data, minibatch_size):
+    flat = data.reshape(-1)
+    n_frames = flat.shape[0]
+    last = {"pg_loss": float("nan"), "v_loss": float("nan"),
+            "entropy": float("nan")}
+    approx_kl = None
+
+    for _ in range(args.update_epochs):
+        perm = torch.randperm(n_frames, device=flat.device)
+        for s in range(0, n_frames, minibatch_size):
+            mb = flat[perm[s:s + minibatch_size]]
+            live = mb.get((GROUP, "mask")).to(torch.float32)
+            denom = live.sum().clamp_min(1.0)
+
+            dist = policy.get_dist(mb)
+            new_logp = dist.log_prob(mb.get((GROUP, "action")))
+            entropy = dist.entropy()
+
+            old_logp = mb.get((GROUP, "sample_log_prob"))
+            if old_logp.dim() == new_logp.dim() + 1:
+                old_logp = old_logp.squeeze(-1)
+            logratio = new_logp - old_logp
+            ratio = logratio.exp()
+
+            adv = mb.get((GROUP, "advantage")).squeeze(-1)
+            if args.norm_adv:
+                lv = live.bool()
+                if lv.sum() > 1:
+                    adv = (adv - adv[lv].mean()) / (adv[lv].std() + 1e-8)
+
+            pg1 = -adv * ratio
+            pg2 = -adv * torch.clamp(ratio, 1 - args.clip_coef,
+                                     1 + args.clip_coef)
+            pg_loss = (torch.max(pg1, pg2) * live).sum() / denom
+
+            old_val = mb.get((GROUP, "state_value")).squeeze(-1)
+            ret = mb.get((GROUP, "value_target")).squeeze(-1)
+            critic(mb)
+            new_val = mb.get((GROUP, "state_value")).squeeze(-1)
+            v_unclipped = (new_val - ret) ** 2
+            v_clipped = (old_val + torch.clamp(new_val - old_val,
+                                               -args.clip_coef,
+                                               args.clip_coef) - ret) ** 2
+            v_loss = 0.5 * (torch.max(v_unclipped, v_clipped) * live).sum() / denom
+
+            ent_loss = (entropy * live).sum() / denom
+            with torch.no_grad():
+                approx_kl = float(
+                    (((ratio - 1) - logratio) * live).sum() / denom)
+
+            loss = pg_loss - args.ent_coef * ent_loss + args.vf_coef * v_loss
+            optimizer.zero_grad()
+            loss.backward()
+            nn.utils.clip_grad_norm_(
+                list(policy.parameters()) + list(critic.parameters()),
+                args.max_grad_norm)
+            optimizer.step()
+
+            last = {"pg_loss": float(pg_loss.detach()),
+                    "v_loss": float(v_loss.detach()),
+                    "entropy": float(ent_loss.detach())}
+        if (args.target_kl is not None and approx_kl is not None
+                and approx_kl > args.target_kl):
+            break
+    return last, approx_kl
+
+
+def conquer_prob_mass(policy, data, n_cells, device):
+    """Mean probability mass a live agent places on any colonize_inhabited action.
+
+    colonize_inhabited actions occupy the third targeted band:
+        indices in [N_NONTARGETED + 2*n_cells,  N_NONTARGETED + 3*n_cells)
+
+    We run the policy in no_grad mode to get the full categorical distribution
+    over the flat action space, then sum probabilities in that slice for each
+    live agent and average across all live (env, step, agent) rows.
+
+    Returns a float in [0, 1].
+    """
+    conquer_lo = N_NONTARGETED + 2 * n_cells
+    conquer_hi = N_NONTARGETED + 3 * n_cells  # exclusive
+
+    flat = data.reshape(-1)                              # [B, ...]
+    live = flat.get((GROUP, "mask"))                     # [B, N]  bool
+    denom = live.sum().item()
+    if denom == 0:
+        return 0.0
+
+    with torch.no_grad():
+        dist = policy.get_dist(flat)                     # MaskedCategorical over [B, N, A]
+        # probs shape: [B, N, action_dim]
+        probs = dist.probs                               # already masked & renormalised
+        conquer_mass = probs[..., conquer_lo:conquer_hi].sum(dim=-1)  # [B, N]
+
+    return float((conquer_mass * live.float()).sum() / denom)
 
 
 def main():
@@ -357,37 +502,20 @@ def main():
         total_frames=num_iters * frames_per_batch,
     )
 
-    replay_buffer = ReplayBuffer(
-        storage=LazyTensorStorage(frames_per_batch, device=device),
-        sampler=SamplerWithoutReplacement(),
-        batch_size=minibatch_size,
-    )
-
-    loss_module = ClipPPOLoss(
-        actor_network=policy,
-        critic_network=critic,
-        clip_epsilon=args.clip_coef,
-        entropy_bonus=args.ent_coef > 0,
-        entropy_coeff=args.ent_coef,
-        critic_coeff=args.vf_coef,
-        normalize_advantage=args.norm_adv,
-        clip_value=args.clip_coef,        # value clipping like cleanRL
-    )
-    loss_module.set_keys(
+    gae = GAE(gamma=args.gamma, lmbda=args.gae_lambda,
+              value_network=critic, average_gae=False)
+    gae.set_keys(
         reward=(GROUP, "reward"),
-        action=(GROUP, "action"),
-        sample_log_prob=(GROUP, "sample_log_prob"),
         value=(GROUP, "state_value"),
         done=(GROUP, "done"),
         terminated=(GROUP, "terminated"),
         advantage=(GROUP, "advantage"),
         value_target=(GROUP, "value_target"),
     )
-    loss_module.make_value_estimator(
-        ValueEstimators.GAE, gamma=args.gamma, lmbda=args.gae_lambda)
 
-    optimizer = torch.optim.Adam(loss_module.parameters(),
-                                 lr=args.learning_rate, eps=1e-5)
+    optimizer = torch.optim.Adam(
+        list(policy.parameters()) + list(critic.parameters()),
+        lr=args.learning_rate, eps=1e-5)
 
     stopper = DarkForestStopper(args)
     return_hist = deque(maxlen=100)
@@ -395,6 +523,13 @@ def main():
     global_step = 0
     start = time.time()
     stop_reason = None
+
+    # Death-cause accumulators (reset each print window)
+    death_starved_acc = 0
+    death_conquered_acc = 0
+    death_planet_destroyed_acc = 0
+
+    n_cells = args.width * args.height
 
     for it, data in enumerate(collector, start=1):
         global_step += data.numel()
@@ -409,11 +544,43 @@ def main():
         n_broadcast = ((actions == A_BROADCAST) & alive_mask).sum().item()
         broadcast_rate = n_broadcast / n_active if n_active > 0 else 0.0
 
-        # episode bookkeeping (returns / survivors / annihilation)
+        # ---- kill counting from batch tensors --------------------------------
+        colonize_inhabited_start = N_NONTARGETED + 2 * n_cells
+        is_kill_action = (actions >= colonize_inhabited_start) & alive_mask
+        next_mask_batch = data["next", GROUP, "mask"]
+        newly_dead = alive_mask & ~next_mask_batch
+        any_kill_action = is_kill_action.any(dim=-1, keepdim=True)
+        batch_kills = int((newly_dead & any_kill_action).sum().item())
+
+        # ---- death-cause counters from env infos ----------------------------
+        # PettingZooWrapper stores per-agent infos; we read aggregated counts
+        # that env.step() now writes into every agent's info dict under the
+        # keys "starved", "conquered", "planet_destroyed".
+        # The collector stores infos in data["info"] as a dict-of-tensors;
+        # keys match what the env returns.  We guard with .get() so the code
+        # is safe if the env doesn't populate infos yet.
+        info_td = data.get("info")  # may be None for older torchrl versions
+        if info_td is not None:
+            for key, acc_name in (
+                ("starved",          "death_starved_acc"),
+                ("conquered",        "death_conquered_acc"),
+                ("planet_destroyed", "death_planet_destroyed_acc"),
+            ):
+                tensor = info_td.get(key)  # shape [E, T] or [E, T, N]
+                if tensor is not None:
+                    locals()[acc_name]   # just to silence linters
+                    if key == "starved":
+                        death_starved_acc += int(tensor.sum().item())
+                    elif key == "conquered":
+                        death_conquered_acc += int(tensor.sum().item())
+                    else:
+                        death_planet_destroyed_acc += int(tensor.sum().item())
+
+        # episode bookkeeping
         annihilations = []
-        done_root = data["next", "done"].squeeze(-1)          # [E, T]
+        done_root = data["next", "done"].squeeze(-1)
         if done_root.any():
-            ep_rew = data["next", GROUP, "episode_reward"].squeeze(-1)  # [E,T,N]
+            ep_rew = data["next", GROUP, "episode_reward"].squeeze(-1)
             next_pop = data["next", GROUP, "observation", "self"][..., 0]
             next_mask = data["next", GROUP, "mask"]
             idx = done_root.nonzero(as_tuple=False)
@@ -425,53 +592,34 @@ def main():
 
         # GAE on the time-structured batch
         with torch.no_grad():
-            loss_module.value_estimator(
-                data,
-                params=loss_module.critic_network_params,
-                target_params=loss_module.target_critic_network_params,
-            )
-        # dead/padded agents must not contribute to the policy gradient
-        adv = data[GROUP, "advantage"]
-        adv = adv * alive_mask.unsqueeze(-1).to(adv.dtype)
-        data.set((GROUP, "advantage"), adv)
+            gae(data)
 
-        replay_buffer.empty()
-        replay_buffer.extend(data.reshape(-1))
+        # Conquer probability mass (computed post-GAE so features are warm)
+        conq_prob = conquer_prob_mass(policy, data, n_cells, device)
 
-        last_losses = {}
-        approx_kl = None
-        for _ in range(args.update_epochs):
-            for _ in range(frames_per_batch // minibatch_size):
-                sample = replay_buffer.sample()
-                loss_vals = loss_module(sample)
-                loss = (loss_vals["loss_objective"]
-                        + loss_vals["loss_critic"]
-                        + loss_vals.get("loss_entropy", 0.0))
-                optimizer.zero_grad()
-                loss.backward()
-                nn.utils.clip_grad_norm_(loss_module.parameters(),
-                                         args.max_grad_norm)
-                optimizer.step()
-                last_losses = {k: float(v.detach())
-                               for k, v in loss_vals.items()
-                               if k.startswith("loss") or k == "kl_approx"}
-                if "kl_approx" in loss_vals.keys():
-                    approx_kl = float(loss_vals["kl_approx"].detach())
-            if (args.target_kl is not None and approx_kl is not None
-                    and approx_kl > args.target_kl):
-                break
+        last_losses, approx_kl = ppo_update(
+            args, policy, critic, optimizer, data, minibatch_size)
 
         mean_ret = float(np.mean(return_hist)) if return_hist else float("nan")
         mean_surv = float(np.mean(surv_hist)) if surv_hist else float("nan")
         sps = int(global_step / (time.time() - start))
 
         if it % 5 == 0 or it == 1:
-            print(f"[iter {it:4d}/{num_iters}] step={global_step} "
-                  f"broadcast_rate={broadcast_rate:.4f} "
-                  f"ema={stopper.ema or 0:.4f} "
-                  f"ep_ret={mean_ret:.2f} survivors={mean_surv:.2f} "
-                  f"v_loss={last_losses.get('loss_critic', float('nan')):.3f} "
-                  f"SPS={sps}")
+            print(
+                f"[iter {it:4d}/{num_iters}] step={global_step} "
+                f"broadcast_rate={broadcast_rate:.4f} "
+                f"conquer_prob={conq_prob:.4f} "
+                f"killed={batch_kills} "
+                f"deaths(starved={death_starved_acc} "
+                f"conquered={death_conquered_acc} "
+                f"planet_destroyed={death_planet_destroyed_acc}) "
+                f"ema={stopper.ema or 0:.4f} "
+                f"ep_ret={mean_ret:.2f} survivors={mean_surv:.2f} "
+                f"v_loss={last_losses.get('v_loss', float('nan')):.3f} "
+                f"SPS={sps}"
+            )
+            # reset window counters after printing
+            death_starved_acc = death_conquered_acc = death_planet_destroyed_acc = 0
 
         if args.record_every and it % args.record_every == 0:
             path = os.path.join(run_dir, "render", f"iter_{it:05d}.json")
@@ -479,7 +627,7 @@ def main():
                                   seed=args.seed + it,
                                   deterministic=args.record_deterministic)
             print(f"   [render] {path} length={meta['episode_length']} "
-                  f"survivors={meta['survivors']}")
+                  f"survivors={meta['survivors']} killed={meta['total_killed']}")
 
         stop_reason = stopper.update(it, broadcast_rate, annihilations)
         if stop_reason:
@@ -488,7 +636,6 @@ def main():
 
     collector.shutdown()
 
-    # checkpoint
     ckpt = os.path.join(run_dir, "checkpoint.pt")
     torch.save({
         "policy": policy.state_dict(),
@@ -500,7 +647,6 @@ def main():
     print(f"[done] saved {ckpt} after {global_step} steps "
           f"({'stopped: ' + stop_reason if stop_reason else 'reached total-timesteps'})")
 
-    # final render recordings (for the visualizer)
     for ep in range(args.record_episodes):
         path = os.path.join(run_dir, "render", f"final_ep{ep:02d}.json")
         meta = record_episode(policy, args, device, action_dim, path,
@@ -508,12 +654,13 @@ def main():
                               deterministic=args.record_deterministic)
         print(f"[render] {path} length={meta['episode_length']} "
               f"survivors={meta['survivors']} "
+              f"killed={meta['total_killed']} "
               f"annihilation={meta['annihilation']}")
 
     try:
         env.close()
     except RuntimeError:
-        pass  # the collector may already have closed the env
+        pass
 
 
 if __name__ == "__main__":

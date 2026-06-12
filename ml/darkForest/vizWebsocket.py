@@ -17,7 +17,14 @@ Server -> client message types:
   "started"    training begun, echoes resolved config + grid dimensions
   "step"       one simulation step: full board state + actions + rewards
   "episode"    summary sent after the replay episode finishes each iteration
+<<<<<<< Updated upstream
   "iteration"  PPO training stats (broadcast rate, losses, survivors, …)
+=======
+               (meta includes broadcaster_deaths + time_to_annihilation)
+  "iteration"  PPO training stats (broadcast rate, losses, entropy, survivors,
+               mean per-broadcaster time_to_annihilation: steps from a civ's
+               first broadcast to its own death in the replay episode, …)
+>>>>>>> Stashed changes
   "done"       training finished naturally or via dark-forest stopper
   "stopped"    aborted by "stop" command
   "error"      something went wrong
@@ -334,6 +341,23 @@ class Session:
 
             it = stats["iteration"]
 
+<<<<<<< Updated upstream
+=======
+            # Per-broadcaster time-to-annihilation for this iteration's
+            # replay episode: for each civ, steps from ITS first broadcast to
+            # ITS OWN death. The emitted value is the mean over civs that
+            # broadcast and then died. None when no replay was streamed this
+            # iteration, no one broadcast, or every broadcaster survived
+            # ("no signal, no hunter").
+            ep_track = {
+                "first_broadcast": {},   # name -> step of its first broadcast
+                "death_step":      {},   # name -> step its alive flipped False
+                "alive_prev":      {},   # name -> alive at previous frame
+            }
+            time_to_annihilation = None
+            broadcaster_deaths = []
+
+>>>>>>> Stashed changes
             # ── Stream a full replay episode every stream_every iterations ──
             if iter_counter[0] % stream_every == 0:
                 episode_seed = args.seed + it
@@ -342,6 +366,20 @@ class Session:
                     """Called for every simulation step inside record_episode_stream."""
                     if self.stop_event.is_set():
                         raise StopTraining
+<<<<<<< Updated upstream
+=======
+                    step_no = frame["step"]
+                    for name, a in frame["actions"].items():
+                        if (a and a.get("type") == "broadcast"
+                                and name not in ep_track["first_broadcast"]):
+                            ep_track["first_broadcast"][name] = step_no
+                    for civ in frame["civilizations"]:
+                        name = civ["name"]
+                        was_alive = ep_track["alive_prev"].get(name, True)
+                        if was_alive and not civ["alive"]:
+                            ep_track["death_step"][name] = step_no
+                        ep_track["alive_prev"][name] = civ["alive"]
+>>>>>>> Stashed changes
                     emit({
                         "type":        "step",
                         "iteration":   it,
@@ -370,6 +408,26 @@ class Session:
                     deterministic=args.record_deterministic,
                 )
 
+<<<<<<< Updated upstream
+=======
+                # A civ counts only if it broadcast and then died.
+                for name, fb in ep_track["first_broadcast"].items():
+                    death = ep_track["death_step"].get(name)
+                    if death is not None and death >= fb:
+                        broadcaster_deaths.append({
+                            "name":                 name,
+                            "first_broadcast_step": fb,
+                            "death_step":           death,
+                            "steps":                death - fb,
+                        })
+                if broadcaster_deaths:
+                    time_to_annihilation = float(
+                        np.mean([d["steps"] for d in broadcaster_deaths]))
+                meta["n_broadcasters"]       = len(ep_track["first_broadcast"])
+                meta["broadcaster_deaths"]   = broadcaster_deaths
+                meta["time_to_annihilation"] = time_to_annihilation
+
+>>>>>>> Stashed changes
                 # Summary once the episode is finished
                 emit({
                     "type":      "episode",
@@ -378,6 +436,12 @@ class Session:
                 })
 
             # ── PPO training stats ──────────────────────────────────────────
+<<<<<<< Updated upstream
+=======
+            stats = dict(stats)
+            stats["n_broadcaster_deaths"] = len(broadcaster_deaths)
+            stats["time_to_annihilation"] = time_to_annihilation
+>>>>>>> Stashed changes
             emit({
                 "type":        "iteration",
                 "iteration":   it,
