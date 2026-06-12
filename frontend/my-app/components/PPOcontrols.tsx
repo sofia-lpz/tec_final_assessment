@@ -76,16 +76,16 @@ const FloatInput = ({ label, value, min, max, onCommit }: { label: string; value
 
 export default function PPOControls() {
   const [config, setConfig] = useState<ConfigState>({
-    ppo: { learningRate: 0.001, gamma: 0.99, critic: "MAPPO" },
+    ppo: { learningRate: 0.0003, gamma: 0.99, critic: "IPPO" },
     env: {
-      civilizations: 5, width: 100, height: 100,
-      planets: 20, harvestRate: 1.5, initialResources: 500,
-      initialPopulation: 100, maxSteps: 1000
+      civilizations: 3, width: 20, height: 20,
+      planets: 9, harvestRate: 0.5, initialResources: 50,
+      initialPopulation: 10, maxSteps: 200
     },
     rewards: {
-      broadcast: -5, destroyed: -10, conquer: 10,
-      colonize: 8, survive: 1, population: 0.5,
-      science: 3, explore: 2, invalid: -2
+      broadcast: 0.1, destroyed: 10, conquer: 3,
+      colonize: 1, survive: 0.1, population: 0.01,
+      science: 0.01, explore: 0.1, invalid: 0
     }
   });
 
