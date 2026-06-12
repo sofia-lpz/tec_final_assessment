@@ -6,7 +6,13 @@ import SolarSystem, {
 } from "@/components/SolarSystem";
 import type { PlanetState } from "@/components/Planet";
 // ── Config ───────────────────────────────────────────────────
-const WS_URL = "ws://localhost:8765";
+const getWsUrl = () => {
+  if (process.env.NEXT_PUBLIC_WS_URL) return process.env.NEXT_PUBLIC_WS_URL;
+  if (typeof window === 'undefined') return null;
+  const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  return `${proto}//${window.location.host}/api/ws`;
+};
+
 const START_CONFIG: Record<string, unknown> = {
   // Match the test client's defaults; tweak later as needed.
 };
@@ -127,7 +133,12 @@ export default function Galaxy() {
   }, [agents]);
   // ── WebSocket lifecycle ────────────────────────────────────
   useEffect(() => {
-    const ws = new WebSocket(WS_URL);
+    const wsUrl = getWsUrl();
+    if (!wsUrl) {
+      setStatus('WebSocket unavailable on the server');
+      return;
+    }
+    const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
     ws.addEventListener("open", () => {
       setStatus("Connected. Starting simulation…");
