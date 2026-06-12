@@ -180,8 +180,27 @@ export const createScenario = async (req, res) => {
 
 export const getScenariosByUser = async (req, res) => {
     try {
-        const scenarios = await Service.getScenariosByUser(req.userId);
-        res.json(scenarios);
+        const options = {};
+
+        if ("_sort" in req.query) {
+            options.sortBy = req.query._sort;
+            options.sortOrder = req.query._order;
+        }
+
+        if ("_start" in req.query || "_end" in req.query) {
+            const start = Math.max(0, Number(req.query._start) || 0);
+            const end = Number(req.query._end);
+            options.start = start;
+            options.limit = Number.isFinite(end) && end > start ? end - start : 10;
+        }
+
+        const { rows, total } = await Service.getScenariosByUser(req.userId, options);
+
+        const start = options.start ?? 0;
+        res.set("Access-Control-Expose-Headers", "X-Total-Count");
+        res.set("X-Total-Count", total);
+        res.set("Content-Range", `${start}-${start + rows.length}/${total}`);
+        res.json(rows);
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
