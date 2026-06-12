@@ -73,8 +73,6 @@ const COLORS = {
   axis: "rgba(255,255,255,0.35)",
 };
 
-const ENTROPY_COLLAPSE_THRESHOLD = 0.15;
-
 /* ============================================================
    LIVE FEED SUBSCRIPTION
    ============================================================ */
@@ -166,14 +164,6 @@ export default function GraficasContainer({
   const metrics = data ?? liveMetrics;
 
   const latest = last(metrics);
-  const entropyCollapsing =
-    (latest?.entropy ?? Infinity) < ENTROPY_COLLAPSE_THRESHOLD;
-
-  const sparklines = [
-    { key: "policyLoss", label: "POLICY LOSS", color: COLORS.policyLoss },
-    { key: "entropy", label: "ENTROPY", color: COLORS.entropy, entropy: true },
-  ] as const;
-
   return (
     <div className="w-full flex flex-col text-white bg-black/20 backdrop-blur-xl border border-white/90 p-4 sm:p-6 lg:p-8 rounded-xl shadow-2xl">
       <h2 className="text-lg sm:text-2xl lg:text-3xl font-light tracking-[0.1em] sm:tracking-[0.2em] mb-6 lg:mb-8 text-center border-b border-white/20 pb-3 lg:pb-4 leading-tight">
@@ -268,57 +258,7 @@ export default function GraficasContainer({
           </div>
         </Panel>
 
-        {/* 4 — PPO diagnostics: 4 sparklines */}
-        <Panel
-          title="PPO DIAGNOSTICS"
-          accent={COLORS.entropy}
-          right={
-            entropyCollapsing ? (
-              <span className="text-[9px] sm:text-[10px] tracking-widest text-red-400">
-                ENTROPY COLLAPSE — DOCTRINE CONVERGING
-              </span>
-            ) : undefined
-          }
-        >
-          <div className="grid grid-cols-2 gap-x-4 gap-y-3 flex-1">
-            {sparklines.map((s) => (
-              <div key={s.key} className="flex flex-col">
-                <div className="flex items-baseline justify-between mb-1">
-                  <span
-                    className="text-[9px] sm:text-[10px] tracking-wider"
-                    style={{
-                      color:
-                        "entropy" in s && entropyCollapsing
-                          ? "#f87171"
-                          : "rgba(156,163,175,1)",
-                    }}
-                  >
-                    {s.label}
-                  </span>
-                  <span className="text-[10px] sm:text-xs tabular-nums text-gray-200">
-                    {fmt(latest?.[s.key], 3)}
-                  </span>
-                </div>
-                <div className="h-12 sm:h-14">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={metrics} margin={{ top: 2, right: 0, left: 0, bottom: 2 }}>
-                      <Tooltip {...tooltipStyle} />
-                      <Line
-                        type="monotone"
-                        dataKey={s.key}
-                        name={s.label}
-                        stroke={s.color}
-                        strokeWidth={1.5}
-                        dot={false}
-                        connectNulls
-                      />
-                    </LineChart>
-                  </ResponsiveContainer>
-                </div>
-              </div>
-            ))}
-          </div>
-        </Panel>
+
       </div>
     </div>
   );
