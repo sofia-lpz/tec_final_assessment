@@ -262,9 +262,64 @@ export const createScenario = async (scenario, options = {}) => {
     });
 };
 
-export const getScenariosByUser = async (options = {}) => {
-    return request('/scenarios', options);
+/**
+ * Fetch the current user's scenarios with optional pagination/sorting.
+ * Matches the backend's react-admin-style params (_start/_end/_sort/_order).
+ * When pagination params are sent, the response is { data, total } thanks to
+ * the X-Total-Count handling in `request`.
+ *
+ * @param {object} [params]
+ * @param {number} [params.start] - offset of the first row (inclusive)
+ * @param {number} [params.end]   - offset of the last row (exclusive)
+ * @param {string} [params.sort]  - column to sort by (e.g. 'name', 'id')
+ * @param {'ASC'|'DESC'} [params.order]
+ */
+export const getScenariosByUser = async ({ start, end, sort, order } = {}, options = {}) => {
+    const query = {};
+    if (start !== undefined) query._start = start;
+    if (end !== undefined) query._end = end;
+    if (sort !== undefined) query._sort = sort;
+    if (order !== undefined) query._order = order;
+    const result = await request('/scenarios', { query, ...options });
+    // Normalise: always return { data, total } so callers don't need to branch
+    if (Array.isArray(result)) return { data: result, total: result.length };
+    return result;
 };
+
+/**
+ * Translate a flat scenario row from the database (snake_case columns) into
+ * the nested camelCase ConfigState shape used by PPOControls. Inverse of the
+ * flattening done when saving. Number() guards against MySQL DECIMAL columns
+ * arriving as strings.
+ */
+export const scenarioToConfig = (row) => ({
+    ppo: {
+        learningRate: Number(row.learning_rate),
+        gamma: Number(row.gamma),
+        critic: row.critic,
+    },
+    env: {
+        civilizations: Number(row.civilizations),
+        width: Number(row.map_width),
+        height: Number(row.map_height),
+        planets: Number(row.planets),
+        harvestRate: Number(row.harvest_rate),
+        initialResources: Number(row.initial_resources),
+        initialPopulation: Number(row.initial_population),
+        maxSteps: Number(row.max_steps),
+    },
+    rewards: {
+        broadcast: Number(row.broadcast_reward),
+        destroyed: Number(row.destroyed_reward),
+        conquer: Number(row.conquer_reward),
+        colonize: Number(row.colonize_reward),
+        survive: Number(row.survive_reward),
+        population: Number(row.population_reward),
+        science: Number(row.science_reward),
+        explore: Number(row.explore_reward),
+        invalid: Number(row.invalid_reward),
+    },
+});
 
 export const getOneScenarioByUser = async (id, options = {}) => {
     return request(`/scenarios/${encodeURIComponent(id)}`, options);
@@ -560,7 +615,7 @@ const dataProvider = {
     getUsers, getOneUser, createUser, updateUser, deleteUser,
     // scenarios
     createScenario, getScenariosByUser, getOneScenarioByUser,
-    updateScenario, deleteScenario,
+    updateScenario, deleteScenario, scenarioToConfig,
     // simulation (websocket)
     startSimulation, stopSimulation, applyAndRestart,
     onSimulationMessage, closeSimulationSocket,
