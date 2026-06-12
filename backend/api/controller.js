@@ -27,8 +27,8 @@ const validateScenarioData = (data) => {
 };
 
 export const login = async (req, res) => {
+    const { username, password } = req.body;
     try {
-        const { username, password } = req.body;
         const user = await Service.login(username, password);
         if (user) {
             const token = jwt.sign({ id: user.id, username: user.username, tokenVersion: user.token_version }, process.env.JWT_SECRET, { expiresIn: '1h' });
