@@ -20,7 +20,7 @@ export default function Footer() {
           <div className="flex flex-col gap-2">
             <span className="text-white font-medium">Comunidad</span>
             <a 
-              href="https://guthib.com/" 
+              href="https://github.com/sofia-lpz/tec_final_assessment" 
               target="_blank" 
               rel="noopener noreferrer" 
               className="hover:text-white transition-colors flex items-center gap-1"
