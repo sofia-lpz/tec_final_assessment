@@ -1,5 +1,6 @@
 import jwt from 'jsonwebtoken';
 import * as Service from '../service.js';
+import { logger } from '../../utils/logger/logger.js';
 
 const verifyToken = (req, res, next) => {
     const authHeader = req.headers['authorization'];
@@ -15,15 +16,17 @@ const verifyToken = (req, res, next) => {
 
     jwt.verify(token, process.env.JWT_SECRET, async (err, decoded) => {
         if (err) {
-            console.log(err);
+            logger.warn({ event: 'invalid_token', ip: req.ip, error: err.message }, 'Failed to authenticate token');
             return res.status(401).send({ status: "Error", message: "Failed to authenticate token" });
         }
         try {
             const user = await Service.getOneUser(decoded.id)
             if (!user || user.token_version !== decoded.tokenVersion) {
+                logger.warn({ event: 'revoked_token_used', userId: decoded.id, ip: req.ip }, 'Attempt with revoked token');
                 return res.status(401).send({ message: "Token has been revoked"})
             }
             req.userId = decoded.id;
+            req.log = req.log.child({ userId: decoded.id });
             next();
         } catch(error) {
             return res.status(500).send({ status: "Error", message: "Internal Server Error" });
