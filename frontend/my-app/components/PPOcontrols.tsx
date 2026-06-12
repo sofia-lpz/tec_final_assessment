@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import LoadSimulationModal from "./LoadSimulation";
 import SaveSimulationModal from "./SaveSimulation";
 
@@ -16,6 +16,61 @@ type ConfigState = {
     colonize: number; survive: number; population: number;
     science: number; explore: number; invalid: number;
   };
+};
+
+// Dropdown para hiperparámetros con valores predefinidos
+const SelectInput = ({ label, value, options, onChange }: { label: string; value: number; options: number[]; onChange: (v: number) => void }) => (
+  <div className="flex flex-col gap-1.5">
+    <label className="text-xs font-light tracking-wider text-gray-300">{label}</label>
+    <select
+      value={value}
+      onChange={(e) => onChange(parseFloat(e.target.value))}
+      className="w-full bg-white/5 border border-white/20 py-1 px-1 text-sm text-white focus:outline-none focus:border-white [&>option]:bg-black"
+    >
+      {options.map(opt => (
+        <option key={opt} value={opt}>{opt}</option>
+      ))}
+    </select>
+  </div>
+);
+
+// Campo numérico de floats con límite [-50, 50]. Permite escribir libremente y
+// confirma el valor (con clamp) al perder el foco o presionar Enter.
+const FloatInput = ({ label, value, min, max, onCommit }: { label: string; value: number; min: number; max: number; onCommit: (v: number) => void }) => {
+  const [text, setText] = useState(String(value));
+
+  useEffect(() => {
+    setText(String(value));
+  }, [value]);
+
+  const commit = () => {
+    const parsed = parseFloat(text);
+    if (isNaN(parsed)) {
+      setText(String(value));
+      return;
+    }
+    const clamped = Math.min(max, Math.max(min, parsed));
+    setText(String(clamped));
+    onCommit(clamped);
+  };
+
+  return (
+    <div className="flex flex-col gap-1">
+      <label className="text-xs font-light tracking-wider text-gray-300">{label}</label>
+      <input
+        type="number"
+        inputMode="decimal"
+        step="any"
+        min={min}
+        max={max}
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+        className="w-full bg-white/5 border border-white/20 py-0.5 px-1 text-sm text-white focus:outline-none focus:border-white"
+      />
+    </div>
+  );
 };
 
 export default function PPOControls() {
@@ -127,8 +182,12 @@ export default function PPOControls() {
                   ))}
                 </div>
               </div>
-              <SliderInput label="LEARNING RATE" value={config.ppo.learningRate} min="0.0001" max="0.01" step="0.0001" onChange={(e: any) => updateConfig("ppo", "learningRate", parseFloat(e.target.value))} />
-              <SliderInput label="GAMMA" value={config.ppo.gamma} min="0.8" max="0.999" step="0.001" onChange={(e: any) => updateConfig("ppo", "gamma", parseFloat(e.target.value))} />
+              <SelectInput label="LEARNING RATE" value={config.ppo.learningRate}
+                options={[0.0001, 0.0003, 0.0005, 0.001, 0.003, 0.005, 0.01]}
+                onChange={(v) => updateConfig("ppo", "learningRate", v)} />
+              <SelectInput label="GAMMA" value={config.ppo.gamma}
+                options={[0.8, 0.9, 0.95, 0.97, 0.99, 0.995, 0.999]}
+                onChange={(v) => updateConfig("ppo", "gamma", v)} />
             </div>
           </AccordionSection>
 
@@ -152,12 +211,12 @@ export default function PPOControls() {
           </AccordionSection>
 
           <AccordionSection id="rewards" title="REWARD WEIGHTS">
-            {/* 3. Grid en Rewards: Reduce la altura a la mitad! */}
+            {/* Campos numéricos de floats, rango [-50, 50], etiquetas completas */}
             <div className="grid grid-cols-2 gap-x-4 gap-y-3">
               {Object.keys(config.rewards).map(key => (
-                <SliderInput key={key} label={key.toUpperCase()} value={(config.rewards as any)[key]} 
-                             min="-20" max="20" step="0.5" 
-                             onChange={(e: any) => updateConfig("rewards", key, parseFloat(e.target.value))} />
+                <FloatInput key={key} label={key.toUpperCase()} value={(config.rewards as any)[key]}
+                            min={-50} max={50}
+                            onCommit={(v) => updateConfig("rewards", key, v)} />
               ))}
             </div>
           </AccordionSection>

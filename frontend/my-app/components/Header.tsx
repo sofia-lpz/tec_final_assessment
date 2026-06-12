@@ -4,19 +4,29 @@ import { useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import SignOutModal from "./SignOutModal";
+import { logout } from "../utils/dataProvider"; // adjust path to where dataProvider.js lives
 
 export default function Header() {
   const pathname = usePathname();
   const router = useRouter();
-  
-  // Estado para controlar la visibilidad del modal
-  const [isSignOutOpen, setIsSignOutOpen] = useState(false);
 
-  // La lógica real de salida se mantiene igual, pero ahora será llamada por el modal
-  const executeSignOut = () => {
-    document.cookie = "authToken=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
-    router.push("/");
-    router.refresh();
+  const [isSignOutOpen, setIsSignOutOpen] = useState(false);
+  const [isSigningOut, setIsSigningOut] = useState(false);
+
+  const executeSignOut = async () => {
+    setIsSigningOut(true);
+    try {
+      await logout(); // POST /api/logout + clearAuth() in its finally
+    } catch {
+      // Even if the server call fails, clearAuth() already ran — proceed
+    } finally {
+      // Keep clearing the cookie too, in case middleware reads it
+      document.cookie = "authToken=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+      setIsSigningOut(false);
+      setIsSignOutOpen(false);
+      router.push("/");
+      router.refresh();
+    }
   };
 
   const getNavStyle = (path: string) => {
