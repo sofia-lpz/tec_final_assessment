@@ -312,7 +312,12 @@ def record_episode_stream(policy, args, device, action_dim,
             "episode_done": not env.agents,
         })
 
-    survivors = int((next_pop[e, t] > 0).sum())
+    # Count survivors from the env directly. `next_pop`/`e`/`t` were a
+    # leftover reference to the training loop's scope and never existed here.
+    survivors = sum(
+        1 for name in env.possible_agents
+        if env.civs[name].alive and env.civs[name].population > 0
+    )
     meta = {
         "width": env.width,
         "height": env.height,

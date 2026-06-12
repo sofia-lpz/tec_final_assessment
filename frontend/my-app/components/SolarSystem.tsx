@@ -20,7 +20,7 @@ import type { PlanetState } from "@/components/Planet";
 
 // ── Defaults ─────────────────────────────────────────────────
 const STAR_SCALE = 11;
-const CELL_SIZE = STAR_SCALE * 2;
+const CELL_SIZE = STAR_SCALE * 3;
 
 const DEFAULT_CELL_COLOR = "#1a2a3a";
 const PLANET_CELL_COLOR = "#4a6a8a";
@@ -257,7 +257,16 @@ const GridCells = forwardRef<GridCellsHandle, GridCellsProps>(function GridCells
 
   return (
     <lineSegments geometry={geometry} renderOrder={-1}>
-      <lineBasicMaterial vertexColors transparent opacity={1} />
+      {/* depthWrite={false} prevents grid lines from z-fighting with
+          themselves when viewed top-down — every cell's top and bottom
+          horizontal edges align in screen space, and identical-depth
+          lines flicker as the GPU picks a winner per frame. */}
+      <lineBasicMaterial
+        vertexColors
+        transparent
+        opacity={1}
+        depthWrite={false}
+      />
     </lineSegments>
   );
 });
@@ -371,7 +380,11 @@ const SolarSystem = forwardRef<SolarSystemHandle, SolarSystemProps>(function Sol
 
   return (
     <div className="h-full w-full bg-black border border-white/90 rounded-xl shadow-2xl">
-      <Canvas camera={{ position: [0, CELL_SIZE * 3, CELL_SIZE * 4], fov: 50, near: 0.1, far: 2000 }}>
+      {/* Top-down camera: positioned directly above the origin, looking
+          straight down at (0,0,0). The tiny Z offset avoids gimbal-lock
+          ambiguity in OrbitControls when the camera is perfectly aligned
+          with the up vector — without it, the initial orbit can snap. */}
+      <Canvas camera={{ position: [0, CELL_SIZE * 14, 0.01], fov: 50, near: 0.1, far: 2000 }}>
         <Environment preset="night" />
         <ambientLight intensity={0.2} />
         <Stars radius={300} depth={60} count={5000} factor={7} fade />
@@ -397,7 +410,14 @@ const SolarSystem = forwardRef<SolarSystemHandle, SolarSystemProps>(function Sol
           planetCells={planetCells}
         />
 
-        <OrbitControls makeDefault target={[0, 0, 0]} enableDamping dampingFactor={0.05} />
+        <OrbitControls
+          makeDefault
+          target={[0, 0, 0]}
+          enableDamping
+          dampingFactor={0.05}
+          autoRotate
+          autoRotateSpeed={0.3}
+        />
       </Canvas>
     </div>
   );

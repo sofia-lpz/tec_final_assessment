@@ -207,6 +207,15 @@ export default function Galaxy() {
     }
     return s;
   }, [currentStep]);
+  // ── Iteration boundary: refresh planet layout ──────────────
+  // Within an iteration, planet positions are static — we lock them into
+  // `initialPlanets` so `planetDefs` can look up live owner/state by
+  // coord without flicker. But across iterations the env respawns planets
+  // at new coordinates. When the *displayed* iteration changes, swap in
+  // the new step's planets as the locked layout.
+  useEffect(() => {
+    if (currentStep) setInitialPlanets(currentStep.planets);
+  }, [currentStep?.iteration]);
   // ── Build PlanetDefs: positions fixed, state per current step ──
   const planetDefs = useMemo<PlanetDef[]>(() => {
     if (!initialPlanets) return [];
