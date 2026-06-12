@@ -5,14 +5,13 @@ import SolarSystem, {
   PlanetDef,
 } from "@/components/SolarSystem";
 import type { PlanetState } from "@/components/Planet";
+import {
+  startSimulation,
+  stopSimulation,
+  onSimulationMessage,
+  closeSimulationSocket,
+} from "@/utils/dataProvider";
 // ── Config ───────────────────────────────────────────────────
-const getWsUrl = () => {
-  if (process.env.NEXT_PUBLIC_WS_URL) return process.env.NEXT_PUBLIC_WS_URL;
-  if (typeof window === 'undefined') return null;
-  const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  return `${proto}//${window.location.host}/api/ws`;
-};
-
 const START_CONFIG: Record<string, unknown> = {
   // Match the test client's defaults; tweak later as needed.
 };
@@ -108,7 +107,6 @@ function planetStateFor(
 // ── Galaxy ───────────────────────────────────────────────────
 export default function Galaxy() {
   const solarRef = useRef<SolarSystemHandle>(null);
-  const wsRef = useRef<WebSocket | null>(null);
   const [grid, setGrid] = useState<{ width: number; height: number } | null>(null);
   const [agents, setAgents] = useState<string[]>([]);
   // Snapshot of all planet *positions*, captured once from the first step.
@@ -131,28 +129,28 @@ export default function Galaxy() {
     });
     return m;
   }, [agents]);
-  // ── WebSocket lifecycle ────────────────────────────────────
+  // ── Simulation subscription via dataProvider ───────────────
+  // We no longer own a WebSocket directly. dataProvider keeps a singleton
+  // socket; we just subscribe to messages and tell it to start/stop the run.
   useEffect(() => {
-    const wsUrl = getWsUrl();
-    if (!wsUrl) {
-      setStatus('WebSocket unavailable on the server');
-      return;
-    }
-    const ws = new WebSocket(wsUrl);
-    wsRef.current = ws;
-    ws.addEventListener("open", () => {
-      setStatus("Connected. Starting simulation…");
-      ws.send(JSON.stringify({ cmd: "start", config: START_CONFIG }));
-    });
-    ws.addEventListener("message", (ev) => {
-      let msg: ServerMsg;
-      try {
-        msg = JSON.parse(ev.data);
-      } catch {
-        return;
-      }
+    let cancelled = false;
+
+    const unsubscribe = onSimulationMessage((payload) => {
+      // dataProvider already parses JSON for us — `payload` is the object,
+      // or a raw string for non-JSON frames (which we ignore).
+      if (!payload || typeof payload !== "object") return;
+      const msg = payload as ServerMsg;
       switch (msg.type) {
         case "started": {
+          // A new run is beginning — could be the first one, or a restart
+          // triggered from PPOControls. Wipe everything tied to the old run
+          // so the loading overlay reappears and the next "step" messages
+          // populate a fresh layout.
+          stepBuffer.current = [];
+          setBufferedCount(0);
+          setInitialPlanets(null);
+          setCurrentStep(null);
+          setIsPlaying(false);
           if (msg.grid) setGrid(msg.grid);
           if (msg.agents) setAgents(msg.agents);
           setStatus(`Started · grid ${msg.grid.width}×${msg.grid.height}`);
@@ -177,25 +175,41 @@ export default function Galaxy() {
         case "done":
           setStatus("Simulation complete.");
           break;
+        case "stopped":
+          // Restart is in progress (or user-initiated stop). Pause playback;
+          // the next "started" message will reset state and reopen the
+          // loading overlay for the new run.
+          setIsPlaying(false);
+          setStatus("Simulation stopped. Restarting…");
+          break;
         default:
           break;
       }
     });
-    ws.addEventListener("close", () => {
-      setStatus((s) => (s.startsWith("Error") ? s : "Disconnected."));
-    });
-    ws.addEventListener("error", () => {
-      setStatus("WebSocket error.");
-    });
+
+    // Kick off the run. startSimulation opens the socket on first use,
+    // then sends {cmd: "start", config}. Errors here are connection /
+    // auth / timeout failures from dataProvider.
+    setStatus("Connecting…");
+    startSimulation(START_CONFIG)
+      .then(() => {
+        if (!cancelled) setStatus("Connected. Starting simulation…");
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        const message = err instanceof Error ? err.message : String(err);
+        setStatus(`WebSocket error: ${message}`);
+      });
+
     return () => {
-      try {
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ cmd: "stop" }));
-        }
-        ws.close();
-      } catch {
-        /* noop */
-      }
+      cancelled = true;
+      unsubscribe();
+      // Best-effort graceful stop, then drop the singleton socket so the
+      // next mount opens a fresh one (important under React StrictMode).
+      stopSimulation().catch(() => {
+        /* socket may already be gone; nothing to do */
+      });
+      closeSimulationSocket();
     };
   }, []);
   // ── Playback loop: advance one buffered step per tick ──────
