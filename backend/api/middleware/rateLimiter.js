@@ -15,7 +15,7 @@ export const loginLimiter = rateLimit({
 export const logoutLimiter = rateLimit({
     windowMs: 1 * 60 * 1000, // 1 min
     max: 30,
-    message: { status: "Error", message: "Too many login attempts, try again later"}
+    message: { status: "Error", message: "Too many logout requests, try again later"}
 });
 
 export const registerLimiter = rateLimit({
