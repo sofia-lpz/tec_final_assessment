@@ -193,6 +193,12 @@ class DarkForestParallelEnv(ParallelEnv):
         truncate = self.steps >= self.max_steps
         last_civ = alive_after <= 1   # dark-forest endgame: one (or none) left
 
+        # win bonus: sole survivor gets rewarded before the episode terminates
+        if last_civ and alive_after == 1:
+            for name in self.agents:
+                if self.civs[name].alive:
+                    rewards[name] += w["win"]
+
         terminations = {}
         truncations = {}
         for name in self.agents:
@@ -232,8 +238,7 @@ class DarkForestParallelEnv(ParallelEnv):
             rewards[civ.name] += w["colonize"] if ok else -w["invalid"]
         elif ttype == 1:
             ok = civ.destroy_planet(coord)
-            if not ok:
-                rewards[civ.name] -= w["invalid"]
+            rewards[civ.name] += w["destroy"] if ok else -w["invalid"]
         else:
             ok = civ.colonize_inhabited_planet(coord)
             rewards[civ.name] += w["conquer"] if ok else -w["invalid"]
