@@ -18,3 +18,4 @@ ml/darkForest/runs/darkforest_torchrl_independent_1781081054/checkpoint.pt
 
 node_modules/
 package-lock.json
+ml/darkForest/runs/
