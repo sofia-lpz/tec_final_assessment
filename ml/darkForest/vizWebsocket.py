@@ -17,6 +17,7 @@ Server -> client message types:
   "started"    training begun, echoes resolved config + grid dimensions
   "step"       one simulation step: full board state + actions + rewards
   "episode"    summary sent after the replay episode finishes each iteration
+<<<<<<< HEAD
 <<<<<<< Updated upstream
   "iteration"  PPO training stats (broadcast rate, losses, survivors, …)
 =======
@@ -25,6 +26,11 @@ Server -> client message types:
                mean per-broadcaster time_to_annihilation: steps from a civ's
                first broadcast to its own death in the replay episode, …)
 >>>>>>> Stashed changes
+=======
+               (meta includes first_broadcast_step + time_to_annihilation)
+  "iteration"  PPO training stats (broadcast rate, losses, entropy, survivors,
+               time_to_annihilation of this iteration's replay episode, …)
+>>>>>>> 004e9f571e90ee785da2e8df60c8bc55ea48e7d7
   "done"       training finished naturally or via dark-forest stopper
   "stopped"    aborted by "stop" command
   "error"      something went wrong
@@ -234,9 +240,9 @@ def train_with_callbacks(args, on_iteration, stop_event):
                 loss.backward()
                 nn.utils.clip_grad_norm_(loss_module.parameters(), args.max_grad_norm)
                 optimizer.step()
-                last_losses = {k: float(v.detach())
+                last_losses = {k: float(v.detach().mean())
                                for k, v in loss_vals.items()
-                               if k.startswith("loss") or k == "kl_approx"}
+                               if k.startswith("loss") or k in ("kl_approx", "entropy")}
                 if "kl_approx" in loss_vals.keys():
                     approx_kl = float(loss_vals["kl_approx"].detach())
             if (args.target_kl is not None and approx_kl is not None
@@ -248,6 +254,15 @@ def train_with_callbacks(args, on_iteration, stop_event):
         elapsed     = time.time() - start_time
         sps         = int(global_step / elapsed) if elapsed > 0 else 0
         current_lr  = optimizer.param_groups[0]["lr"]
+
+        # Raw policy entropy. torchrl >= 0.3 reports it directly in the loss
+        # output as "entropy"; older versions only expose
+        # loss_entropy = -ent_coef * entropy, so we invert that as a fallback.
+        entropy = last_losses.get("entropy")
+        if entropy is None:
+            ent_loss = last_losses.get("loss_entropy")
+            if ent_loss is not None and args.ent_coef > 0:
+                entropy = -ent_loss / args.ent_coef
 
         stop_reason = stopper.update(it, broadcast_rate, annihilations)
         ann         = list(stopper.recent_ann)
@@ -263,6 +278,7 @@ def train_with_callbacks(args, on_iteration, stop_event):
             "value_loss":          last_losses.get("loss_critic"),
             "policy_loss":         last_losses.get("loss_objective"),
             "entropy_loss":        last_losses.get("loss_entropy"),
+            "entropy":             entropy,
             "approx_kl":           approx_kl,
             "learning_rate":       current_lr,
             "sps":                 sps,
@@ -341,6 +357,7 @@ class Session:
 
             it = stats["iteration"]
 
+<<<<<<< HEAD
 <<<<<<< Updated upstream
 =======
             # Per-broadcaster time-to-annihilation for this iteration's
@@ -358,6 +375,16 @@ class Session:
             broadcaster_deaths = []
 
 >>>>>>> Stashed changes
+=======
+            # Time-to-annihilation for this iteration's replay episode:
+            # steps elapsed between the FIRST broadcast and the end of an
+            # episode that ended in annihilation. None when no replay was
+            # streamed this iteration, no one broadcast, or everyone survived
+            # ("no signal, no hunter").
+            ep_track = {"first_broadcast": None}
+            time_to_annihilation = None
+
+>>>>>>> 004e9f571e90ee785da2e8df60c8bc55ea48e7d7
             # ── Stream a full replay episode every stream_every iterations ──
             if iter_counter[0] % stream_every == 0:
                 episode_seed = args.seed + it
@@ -366,6 +393,7 @@ class Session:
                     """Called for every simulation step inside record_episode_stream."""
                     if self.stop_event.is_set():
                         raise StopTraining
+<<<<<<< HEAD
 <<<<<<< Updated upstream
 =======
                     step_no = frame["step"]
@@ -380,6 +408,13 @@ class Session:
                             ep_track["death_step"][name] = step_no
                         ep_track["alive_prev"][name] = civ["alive"]
 >>>>>>> Stashed changes
+=======
+                    if ep_track["first_broadcast"] is None and any(
+                        a and a.get("type") == "broadcast"
+                        for a in frame["actions"].values()
+                    ):
+                        ep_track["first_broadcast"] = frame["step"]
+>>>>>>> 004e9f571e90ee785da2e8df60c8bc55ea48e7d7
                     emit({
                         "type":        "step",
                         "iteration":   it,
@@ -408,6 +443,7 @@ class Session:
                     deterministic=args.record_deterministic,
                 )
 
+<<<<<<< HEAD
 <<<<<<< Updated upstream
 =======
                 # A civ counts only if it broadcast and then died.
@@ -428,6 +464,15 @@ class Session:
                 meta["time_to_annihilation"] = time_to_annihilation
 
 >>>>>>> Stashed changes
+=======
+                if meta.get("annihilation") and ep_track["first_broadcast"] is not None:
+                    time_to_annihilation = (
+                        meta["episode_length"] - ep_track["first_broadcast"]
+                    )
+                meta["first_broadcast_step"] = ep_track["first_broadcast"]
+                meta["time_to_annihilation"] = time_to_annihilation
+
+>>>>>>> 004e9f571e90ee785da2e8df60c8bc55ea48e7d7
                 # Summary once the episode is finished
                 emit({
                     "type":      "episode",
@@ -436,12 +481,18 @@ class Session:
                 })
 
             # ── PPO training stats ──────────────────────────────────────────
+<<<<<<< HEAD
 <<<<<<< Updated upstream
 =======
             stats = dict(stats)
             stats["n_broadcaster_deaths"] = len(broadcaster_deaths)
             stats["time_to_annihilation"] = time_to_annihilation
 >>>>>>> Stashed changes
+=======
+            stats = dict(stats)
+            stats["first_broadcast_step"] = ep_track["first_broadcast"]
+            stats["time_to_annihilation"] = time_to_annihilation
+>>>>>>> 004e9f571e90ee785da2e8df60c8bc55ea48e7d7
             emit({
                 "type":        "iteration",
                 "iteration":   it,

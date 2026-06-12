@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 <<<<<<< Updated upstream
 SCIENCE_PER_RANGE = 50          
 =======
@@ -6,12 +7,19 @@ SCIENCE_PER_RANGE = 50
 #  * striking first is CHEAP and ALWAYS succeeds (revealing yourself is fatal)
 SCIENCE_PER_RANGE = 50   # back to cleanrl value: exploration radius grows slowly
 >>>>>>> Stashed changes
+=======
+SCIENCE_PER_RANGE = 30       
+>>>>>>> 004e9f571e90ee785da2e8df60c8bc55ea48e7d7
 COLONIZE_COST = 50
 CONQUER_COST = 10        # cheap first strike — affordable from initial resources
 DESTROY_COST = 80        # pricier than conquering since you gain no planet
 SCIENCE_PER_EXPLORE = 1
 SCIENCE_PER_BROADCAST = 5
+<<<<<<< HEAD
 <<<<<<< Updated upstream
+=======
+SCIENCE_PER_CAPITA = 0.1        # passive research per unit population per step
+>>>>>>> 004e9f571e90ee785da2e8df60c8bc55ea48e7d7
 CONQUER_SCIENCE_FRACTION = 0.5  
 =======
 CONQUER_SCIENCE_FRACTION = 0.5
@@ -29,7 +37,9 @@ dict_reward_weights = {
             "science": 0.01,       # per unit change in science (signed)
             "colonize": 1.0,       # successful empty colonization
             "conquer": 3.0,        # successful hostile takeover
+            "destroy": 3.0,        # successful planet destruction
             "destroyed": 10.0,     # subtracted if this civ is wiped this step
+            "win": 50.0,           # bonus for being the last civ standing
             "invalid": 0.0,        # subtracted if a (masked-out) action is a no-op
 =======
     "explore":    0.1,    # per newly explored cell

@@ -1,6 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import LoadSimulationModal from "./LoadSimulation";
+import SaveSimulationModal from "./SaveSimulation";
+import { applyAndRestart, ApiError, handleUnauthorized } from "../utils/dataProvider"; // adjust path to where dataProvider.js lives
 
 type ConfigState = {
   ppo: { learningRate: number; gamma: number; critic: "IPPO" | "MAPPO" };
@@ -10,33 +13,120 @@ type ConfigState = {
     initialPopulation: number; maxSteps: number;
   };
   rewards: {
-    broadcast: number; destroyed: number; conquer: number;
-    colonize: number; survive: number; population: number;
-    science: number; explore: number; invalid: number;
+    explore: number; broadcast: number; survive: number;
+    population: number; science: number; colonize: number;
+    conquer: number; destroy: number; destroyed: number;
+    win: number; invalid: number;
   };
+};
+
+// Dropdown para hiperparámetros con valores predefinidos
+const SelectInput = ({ label, value, options, onChange }: { label: string; value: number; options: number[]; onChange: (v: number) => void }) => (
+  <div className="flex flex-col gap-1.5">
+    <label className="text-xs font-light tracking-wider text-gray-300">{label}</label>
+    <select
+      value={value}
+      onChange={(e) => onChange(parseFloat(e.target.value))}
+      className="w-full bg-white/5 border border-white/20 py-1 px-1 text-sm text-white focus:outline-none focus:border-white [&>option]:bg-black"
+    >
+      {options.map(opt => (
+        <option key={opt} value={opt}>{opt}</option>
+      ))}
+    </select>
+  </div>
+);
+
+// Campo numérico de floats con límite [-50, 50]. Permite escribir libremente y
+// confirma el valor (con clamp) al perder el foco o presionar Enter.
+const FloatInput = ({ label, value, min, max, onCommit }: { label: string; value: number; min: number; max: number; onCommit: (v: number) => void }) => {
+  const [text, setText] = useState(String(value));
+
+  useEffect(() => {
+    setText(String(value));
+  }, [value]);
+
+  const commit = () => {
+    const parsed = parseFloat(text);
+    if (isNaN(parsed)) {
+      setText(String(value));
+      return;
+    }
+    const clamped = Math.min(max, Math.max(min, parsed));
+    setText(String(clamped));
+    onCommit(clamped);
+  };
+
+  return (
+    <div className="flex flex-col gap-1">
+      <label className="text-xs font-light tracking-wider text-gray-300">{label}</label>
+      <input
+        type="text"
+        inputMode="decimal"
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+        className="w-full bg-white/5 border border-white/20 py-0.5 px-1 text-sm text-white focus:outline-none focus:border-white"
+      />
+    </div>
+  );
 };
 
 export default function PPOControls() {
   const [config, setConfig] = useState<ConfigState>({
-    ppo: { learningRate: 0.001, gamma: 0.99, critic: "MAPPO" },
+    ppo: { learningRate: 0.0003, gamma: 0.99, critic: "IPPO" },
     env: {
-      civilizations: 5, width: 100, height: 100,
-      planets: 20, harvestRate: 1.5, initialResources: 500,
-      initialPopulation: 100, maxSteps: 1000
+      civilizations: 3, width: 20, height: 20,
+      planets: 10, harvestRate: 0.1, initialResources: 50,
+      initialPopulation: 10, maxSteps: 200
     },
     rewards: {
-      broadcast: -5, destroyed: -10, conquer: 10,
-      colonize: 8, survive: 1, population: 0.5,
-      science: 3, explore: 2, invalid: -2
+      explore: 0.1, broadcast: 0.5, survive: 0.1,
+      population: 0.0, science: 0.01, colonize: 1.0,
+      conquer: 20.0, destroy: 4.0, destroyed: 30.0,
+      win: 25.0, invalid: 0.0
     }
   });
 
-  // Corrección de TypeScript: Se añade "" al tipo
   const [openSection, setOpenSection] = useState<"ppo" | "env" | "rewards" | "">("ppo");
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isSaveModalOpen, setIsSaveModalOpen] = useState(false);
+  const [applyStatus, setApplyStatus] = useState<"idle" | "sending" | "sent" | "error">("idle");
+  const [applyError, setApplyError] = useState<string | null>(null);
+  const [currentScenario, setCurrentScenario] = useState<{ id: number; name: string } | null>(null);
 
-  const handleApply = () => console.log("Applying to simulation:", config);
-  const handleSave = async () => alert("Parámetros guardados (Simulado)");
-  const handleLoad = async () => alert("Abre modal de historial (Simulado)");
+  const handleApply = async () => {
+    setApplyStatus("sending");
+    setApplyError(null);
+    try {
+      await applyAndRestart(config);
+      setApplyStatus("sent");
+      setTimeout(() => setApplyStatus("idle"), 2000);
+    } catch (err) {
+      // Check for unauthorized error and handle it
+      if (err instanceof ApiError && err.isUnauthorized) {
+        await handleUnauthorized();
+        return;
+      }
+      setApplyStatus("error");
+      setApplyError(err instanceof ApiError ? err.message : "Failed to send configuration");
+    }
+  };
+  const handleSaveClick = () => setIsSaveModalOpen(true);
+  const handleLoadClick = () => setIsModalOpen(true);
+
+  // El modal ya persiste el escenario por su cuenta (dataProvider.createScenario).
+  // Este callback solo se dispara tras un guardado exitoso.
+  const handleSaved = (created: unknown, meta: { id: number; name: string }) => {
+    setCurrentScenario(meta);
+    console.log(`Simulación '${meta.name}' guardada en BD:`, created);
+  };
+
+  const applyLoadedConfig = (loadedConfig: any, meta: { id: number; name: string }) => {
+    setConfig(loadedConfig);
+    setCurrentScenario(meta);
+    console.log("Configuración cargada y aplicada al panel:", loadedConfig);
+  };
 
   const updateConfig = (section: keyof ConfigState, field: string, value: any) => {
     setConfig(prev => ({
@@ -45,9 +135,10 @@ export default function PPOControls() {
     }));
   };
 
+  // 1. Sliders más compactos (quitamos espacio vertical innecesario)
   const SliderInput = ({ label, value, min, max, step, onChange }: any) => (
-    <div className="space-y-2">
-      <label className="flex justify-between text-[9px] lg:text-[10px] font-light tracking-wider text-gray-300 gap-2">
+    <div className="flex flex-col gap-1.5">
+      <label className="flex justify-between text-xs font-light tracking-wider text-gray-300 gap-1">
         <span className="truncate">{label}</span>
         <span className="shrink-0">{value}</span>
       </label>
@@ -56,14 +147,14 @@ export default function PPOControls() {
     </div>
   );
 
-  // Componente interno para manejar la animación del acordeón
+  // 2. Acordeones optimizados para menos "espacio muerto"
   const AccordionSection = ({ id, title, children }: { id: "ppo" | "env" | "rewards", title: string, children: React.ReactNode }) => {
     const isOpen = openSection === id;
     return (
       <div className="border-b border-white/10 last:border-0">
         <button
           onClick={() => setOpenSection(isOpen ? "" : id)}
-          className="w-full flex justify-between items-center text-xs tracking-widest text-white/70 hover:text-white py-3 transition-colors"
+          className="w-full flex justify-between items-center text-sm tracking-widest text-white/70 hover:text-white py-2.5 transition-colors"
         >
           <span>{title}</span>
           <svg 
@@ -79,7 +170,7 @@ export default function PPOControls() {
           }`}
         >
           <div className="overflow-hidden">
-            <div className="pt-2 pb-4 pl-2">
+            <div className="pt-1 pb-3 pl-1">
               {children}
             </div>
           </div>
@@ -89,92 +180,151 @@ export default function PPOControls() {
   };
 
   return (
-    <div className="h-full max-h-full flex flex-col text-white bg-black/20 backdrop-blur-xl border border-white/90 p-4 sm:p-6 lg:p-8 rounded-xl shadow-2xl overflow-hidden">
-      
-      {/* HEADER FIJO */}
-      <div className="mb-4 text-center border-b border-white/20 pb-4 shrink-0">
-        <h2 className="text-base sm:text-lg lg:text-xl font-light tracking-[0.15em] sm:tracking-widest leading-tight break-words">
-          SIMULATION CONTROLS
-        </h2>
-      </div>
-      
-      {/* CONTENEDOR DE PARÁMETROS CON SCROLL INDEPENDIENTE */}
-      <div className="flex-1 overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-white/20">
+    <>
+      <div className="h-full max-h-full flex flex-col text-white bg-black/20 backdrop-blur-xl border border-white/90 p-4 lg:p-6 rounded-xl shadow-2xl overflow-hidden">
         
-        <AccordionSection id="ppo" title="ALGORITHM SETUP">
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <label className="text-[9px] lg:text-[10px] font-light tracking-wider text-gray-300">CRITIC TYPE</label>
-              <div className="flex gap-2">
-                {["IPPO", "MAPPO"].map(type => (
-                  <button key={type} onClick={() => updateConfig("ppo", "critic", type)}
-                    className={`flex-1 py-1 text-[10px] border ${config.ppo.critic === type ? "bg-white text-black" : "border-white/40 hover:bg-white/10"}`}>
-                    {type}
-                  </button>
-                ))}
+        <div className="mb-3 text-center border-b border-white/20 pb-3 shrink-0">
+          <h2 className="text-base lg:text-lg font-light tracking-[0.15em] sm:tracking-widest leading-tight break-words">
+            SIMULATION CONTROLS
+          </h2>
+        </div>
+        
+        <div className="flex-1 overflow-y-auto pr-1 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+          
+          <AccordionSection id="ppo" title="ALGORITHM SETUP">
+            <div className="flex flex-col gap-3">
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-light tracking-wider text-gray-300">CRITIC TYPE</label>
+                <div className="flex gap-2">
+                  {["IPPO", "MAPPO"].map(type => (
+                    <button key={type} onClick={() => updateConfig("ppo", "critic", type)}
+                      className={`flex-1 py-1 text-xs border ${config.ppo.critic === type ? "bg-white text-black" : "border-white/40 hover:bg-white/10"}`}>
+                      {type}
+                    </button>
+                  ))}
+                </div>
               </div>
+              <SelectInput label="LEARNING RATE" value={config.ppo.learningRate}
+                options={[0.0001, 0.0003, 0.0005, 0.001, 0.003, 0.005, 0.01]}
+                onChange={(v) => updateConfig("ppo", "learningRate", v)} />
+              <SelectInput label="GAMMA" value={config.ppo.gamma}
+                options={[0.8, 0.9, 0.95, 0.97, 0.99, 0.995, 0.999]}
+                onChange={(v) => updateConfig("ppo", "gamma", v)} />
             </div>
-            <SliderInput label="LEARNING RATE" value={config.ppo.learningRate} min="0.0001" max="0.01" step="0.0001" onChange={(e: any) => updateConfig("ppo", "learningRate", parseFloat(e.target.value))} />
-            <SliderInput label="GAMMA" value={config.ppo.gamma} min="0.8" max="0.999" step="0.001" onChange={(e: any) => updateConfig("ppo", "gamma", parseFloat(e.target.value))} />
-          </div>
-        </AccordionSection>
+          </AccordionSection>
 
-        <AccordionSection id="env" title="ENVIRONMENT">
-          <div className="grid grid-cols-2 gap-4">
-            {[
-              { label: "AGENTS", key: "civilizations" }, { label: "STEPS", key: "maxSteps" },
-              { label: "WIDTH", key: "width" }, { label: "HEIGHT", key: "height" },
-              { label: "PLANETS", key: "planets" }, { label: "HARVEST RATE", key: "harvestRate" },
-              { label: "INIT RES", key: "initialResources" }, { label: "INIT POP", key: "initialPopulation" }
-            ].map(item => (
-              <div key={item.key} className="space-y-1">
-                <label className="text-[9px] text-gray-400 tracking-wider truncate block">{item.label}</label>
-                <input type="number" value={(config.env as any)[item.key]} 
-                       onChange={(e) => updateConfig("env", item.key, parseFloat(e.target.value))}
-                       className="w-full bg-white/5 border border-white/20 p-1 text-xs text-white focus:outline-none focus:border-white" />
-              </div>
-            ))}
-          </div>
-        </AccordionSection>
+          <AccordionSection id="env" title="ENVIRONMENT">
+            {/* Margen ajustado (gap-y-2) */}
+            <div className="grid grid-cols-2 gap-x-3 gap-y-2">
+              {[
+                { label: "AGENTS", key: "civilizations" }, { label: "STEPS", key: "maxSteps" },
+                { label: "WIDTH", key: "width" }, { label: "HEIGHT", key: "height" },
+                { label: "PLANETS", key: "planets" }, { label: "HARVEST RATE", key: "harvestRate" },
+                { label: "INIT RES", key: "initialResources" }, { label: "INIT POP", key: "initialPopulation" }
+              ].map(item => (
+                <div key={item.key} className="flex flex-col gap-1">
+                  <label className="text-xs text-gray-400 tracking-wider truncate">{item.label}</label>
+                  <input type="number" value={(config.env as any)[item.key]} 
+                         onChange={(e) => updateConfig("env", item.key, parseFloat(e.target.value))}
+                         className="w-full bg-white/5 border border-white/20 py-0.5 px-1 text-sm text-white focus:outline-none focus:border-white" />
+                </div>
+              ))}
+            </div>
+          </AccordionSection>
 
-        <AccordionSection id="rewards" title="REWARD WEIGHTS">
-          <div className="space-y-4">
-            {Object.keys(config.rewards).map(key => (
-              <SliderInput key={key} label={key.toUpperCase()} value={(config.rewards as any)[key]} 
-                           min="-20" max="20" step="0.5" 
-                           onChange={(e: any) => updateConfig("rewards", key, parseFloat(e.target.value))} />
-            ))}
-          </div>
-        </AccordionSection>
+          <AccordionSection id="rewards" title="REWARD WEIGHTS">
+            {/* Campos numéricos de floats, rango [-50, 50], etiquetas completas */}
+            <div className="grid grid-cols-2 gap-x-4 gap-y-3">
+              {Object.keys(config.rewards).map(key => (
+                <FloatInput key={key} label={key.toUpperCase()} value={(config.rewards as any)[key]}
+                            min={-50} max={50}
+                            onCommit={(v) => updateConfig("rewards", key, v)} />
+              ))}
+            </div>
+          </AccordionSection>
 
-      </div>
+        </div>
 
-      {/* ÁREA DE ACCIÓN INFERIOR FIJA */}
-      <div className="mt-4 pt-4 border-t border-white/20 shrink-0 space-y-3">
-        <button onClick={handleApply} className="w-full py-2 lg:py-3 border border-white hover:bg-white hover:text-black text-[10px] sm:text-xs lg:text-sm font-semibold tracking-widest transition-all duration-300 flex items-center justify-center gap-2">
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-          </svg>
-          APPLY & RESTART
-        </button>
-        
-        <div className="flex gap-3">
-          <button onClick={handleSave} className="flex-1 flex items-center justify-center gap-2 py-2 border border-white/40 hover:bg-white/10 transition-colors text-[9px] tracking-widest">
-            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
+        {/* Footer más compacto */}
+        <div className="mt-3 pt-3 border-t border-white/20 shrink-0 flex flex-col gap-2">
+          <button onClick={handleApply} disabled={applyStatus === "sending"}
+            className="w-full py-2 border border-white hover:bg-white hover:text-black disabled:opacity-50 disabled:cursor-wait text-[10px] sm:text-xs font-semibold tracking-widest transition-all duration-300 flex items-center justify-center gap-2">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
-            SAVE
+            {applyStatus === "sending" ? "SENDING..." : applyStatus === "sent" ? "SENT ✓" : "APPLY & RESTART"}
           </button>
-          <button onClick={handleLoad} className="flex-1 flex items-center justify-center gap-2 py-2 border border-white/40 hover:bg-white/10 transition-colors text-[9px] tracking-widest">
+          {applyStatus === "error" && applyError && (
+            <p className="text-[10px] tracking-wider text-red-400 text-center">{applyError}</p>
+          )}
+
+          {/* Scenario name badge — shown when a scenario is loaded */}
+          {currentScenario && (
+            <div className="flex items-center gap-2 px-2 py-1.5 bg-white/5 border border-white/10 rounded-sm">
+              <svg className="w-3 h-3 text-white/40 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+              <span className="text-[10px] tracking-widest text-white/60 truncate flex-1 min-w-0">
+                {currentScenario.name.toUpperCase()}
+              </span>
+              <button
+                onClick={() => setCurrentScenario(null)}
+                className="text-white/30 hover:text-white/60 transition-colors shrink-0"
+                title="Clear loaded scenario"
+              >
+                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+          )}
+
+          {/* Save row — splits into SAVE + SAVE AS when a scenario is loaded */}
+          {currentScenario ? (
+            <div className="flex gap-2">
+              <button
+                onClick={handleSaveClick}
+                className="flex-1 py-2 border border-white/40 hover:bg-white/10 transition-colors text-[10px] tracking-widest flex items-center justify-center gap-1.5"
+                title={`Overwrite "${currentScenario.name}"`}
+              >
+                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
+                </svg>
+                SAVE
+              </button>
+              <button
+                onClick={() => { setCurrentScenario(null); handleSaveClick(); }}
+                className="flex-1 py-2 border border-white/40 hover:bg-white/10 transition-colors text-[10px] tracking-widest flex items-center justify-center gap-1.5"
+                title="Save as a new scenario"
+              >
+                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                </svg>
+                SAVE AS
+              </button>
+            </div>
+          ) : (
+            <button onClick={handleSaveClick} className="w-full py-2 border border-white/40 hover:bg-white/10 transition-colors text-xs tracking-widest flex items-center justify-center gap-2">
+              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
+              </svg>
+              SAVE
+            </button>
+          )}
+
+          <button onClick={handleLoadClick} className="w-full py-2 border border-white/40 hover:bg-white/10 transition-colors text-xs tracking-widest flex items-center justify-center gap-2">
             <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
             </svg>
             LOAD
           </button>
         </div>
+
       </div>
 
-    </div>
+      <LoadSimulationModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onLoad={applyLoadedConfig} />
+      <SaveSimulationModal isOpen={isSaveModalOpen} onClose={() => setIsSaveModalOpen(false)} config={config} current={currentScenario} onSaved={(res, meta) => handleSaved(res, meta)} />
+    </>
   );
 }

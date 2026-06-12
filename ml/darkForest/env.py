@@ -208,6 +208,12 @@ class DarkForestParallelEnv(ParallelEnv):
         truncate = self.steps >= self.max_steps
         last_civ = alive_after <= 1   # dark-forest endgame: one (or none) left
 
+        # win bonus: sole survivor gets rewarded before the episode terminates
+        if last_civ and alive_after == 1:
+            for name in self.agents:
+                if self.civs[name].alive:
+                    rewards[name] += w["win"]
+
         terminations = {}
         truncations = {}
         for name in self.agents:
@@ -281,6 +287,7 @@ class DarkForestParallelEnv(ParallelEnv):
             planet = self.planet_at(coord)
             former = planet.civilization if planet is not None else None
             ok = civ.destroy_planet(coord)
+<<<<<<< HEAD
 <<<<<<< Updated upstream
             if not ok:
                 rewards[civ.name] -= w["invalid"]
@@ -294,6 +301,9 @@ class DarkForestParallelEnv(ParallelEnv):
             if hostile and former.coord == coord:
                 self._planet_destroyed_this_step.add(former.name)
 >>>>>>> Stashed changes
+=======
+            rewards[civ.name] += w["destroy"] if ok else -w["invalid"]
+>>>>>>> 004e9f571e90ee785da2e8df60c8bc55ea48e7d7
         else:
             planet = self.planet_at(coord)
             former = planet.civilization if planet is not None else None

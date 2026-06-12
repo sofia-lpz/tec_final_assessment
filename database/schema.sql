@@ -1,18 +1,20 @@
+DROP DATABASE IF EXISTS `assessment`;
 CREATE DATABASE `assessment`;
 USE `assessment`;
-
 CREATE TABLE users (
     id int NOT NULL AUTO_INCREMENT,
     username varchar(50) NOT NULL DEFAULT 'none',
     password varchar(255) NOT NULL,
     role enum('admin', 'user') NOT NULL DEFAULT 'user',
+    token_version int NOT NULL DEFAULT 0,
     PRIMARY KEY (id)
 );
-
 CREATE TABLE scenarios (
     id int NOT NULL AUTO_INCREMENT,
     user_id int NOT NULL,
     name varchar(255) NOT NULL,
+    learning_rate float NOT NULL,
+    gamma float NOT NULL,
     broadcast_reward float NOT NULL,
     destroyed_reward float NOT NULL,
     conquer_reward float NOT NULL,
@@ -33,4 +35,4 @@ CREATE TABLE scenarios (
     critic enum('IPPO', 'MAPPO') NOT NULL,
     PRIMARY KEY (id),
     FOREIGN KEY (user_id) REFERENCES users(id)
-)
+);

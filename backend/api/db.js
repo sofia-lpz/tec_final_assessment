@@ -22,11 +22,20 @@ export async function verifyPassword(username, password) {
     return user;
 }
 
+export async function incrementTokenVersion(userId) {
+    const conn = await connectToDB()
+    await conn.execute(
+        "UPDATE users SET token_version = token_version + 1 WHERE id = ?",
+        [userId]
+    );
+    conn.end()
+}
+
 //Users
 export async function getUserByUsername(username) {
     const conn = await connectToDB();
     const [rows] = await conn.execute(
-        "SELECT id, username, role FROM users WHERE username = ?",
+        "SELECT id, username, role, password, token_version FROM users WHERE username = ?",
         [username]
     );
     conn.end();
@@ -119,7 +128,7 @@ export async function deleteUser(id) {
 export async function getOneUser(id) {
     const conn = await connectToDB();
     const [rows] = await conn.execute(
-        "SELECT id, username, role FROM users WHERE id = ?",
+        "SELECT id, username, role, token_version FROM users WHERE id = ?",
         [id]
     );
     conn.end();
@@ -211,14 +220,33 @@ export async function getScenarios(req) {
     }
 }
 
-export async function getScenariosByUser(userId) {
+export async function getScenariosByUser(userId, options = {}) {
     const conn = await connectToDB();
-    const [rows] = await conn.execute(
-        "SELECT * FROM scenarios WHERE user_id = ?",
-        [userId]
-    );
-    conn.end();
-    return rows;
+    try {
+        const [countRows] = await conn.execute(
+            "SELECT COUNT(*) AS total FROM scenarios WHERE user_id = ?",
+            [userId]
+        );
+        const total = countRows[0].total;
+
+        let query = "SELECT * FROM scenarios WHERE user_id = ?";
+        const params = [userId];
+
+        if (options.sortBy) {
+            const sortOrder = options.sortOrder === "ASC" ? "ASC" : "DESC";
+            query += ` ORDER BY ${conn.escapeId(options.sortBy)} ${sortOrder}`;
+        }
+
+        if (options.limit !== undefined) {
+            query += " LIMIT ?, ?";
+            params.push(options.start, options.limit);
+        }
+
+        const [rows] = await conn.query(query, params);
+        return { rows, total };
+    } finally {
+        conn.end();
+    }
 }
 
 export async function createScenario(scenarioData) {

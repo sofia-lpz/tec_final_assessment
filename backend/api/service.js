@@ -9,6 +9,15 @@ export const login = async (username, password) => {
     }
 };
 
+export const incrementTokenVersion = async (id) => {
+    try {
+        const result = await db.incrementTokenVersion(Number(id));
+        return result;
+    } catch (error) {
+        throw error;
+    }
+}
+
 //Users
 export const getUsers = async (req) => {
     try {
@@ -74,10 +83,10 @@ export const createScenario = async (scenarioData, userId) => {
     }
 };
 
-export const getScenariosByUser = async (userId) => {
+export const getScenariosByUser = async (userId, options = {}) => {
     try {
-        const scenarios = await db.getScenariosByUser(userId);
-        return scenarios;
+        const result = await db.getScenariosByUser(userId, options);
+        return result;
     } catch (error) {
         throw error;
     }

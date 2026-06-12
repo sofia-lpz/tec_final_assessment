@@ -3,6 +3,7 @@ import bodyParser from 'body-parser';
 import {router} from './api/routes.js'
 import 'dotenv/config'
 import { httpLogger } from "./utils/logger/httpLogger.js";
+import { globalLimiter } from './api/middleware/rateLimiter.js';
 
 const requiredEnv = ['DB_HOST', 'DB_DATABASE', 'DB_USER', 'DB_PASSWORD', 'JWT_SECRET'];
 const missing = requiredEnv.filter((key) => !process.env[key]);
@@ -13,6 +14,7 @@ if (missing.length > 0) {
 }
 
 const app = express();
+app.set('trust proxy', 1);
 app.use(httpLogger);
 
 // import * as Service from "./api/service.js";
@@ -24,11 +26,10 @@ app.use(httpLogger);
 
 const PORT = process.env.PORT || 8080;
 app.use(bodyParser.json());
+app.use(globalLimiter);
 app.use("/api", router);
 app.use(express.static('public'));
 app.use('/', express.static('public'));
 app.listen(PORT, () => {
   console.log(`backend escuchando en el puerto ${PORT}`);
 });
-
-

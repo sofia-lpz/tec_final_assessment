@@ -18,25 +18,18 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Mi Proyecto 3D",
   description: "Simulación realizada por el equipo",
+  manifest: "/manifest.json",
 };
 
 export default function RootLayout({
   children,
-}: Readonly<{
-  children: React.ReactNode;
-}>) {
+}: {
+  children: React.ReactNode
+}) {
   return (
-    <html
-      lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
-    >
-      <body className="min-h-full flex flex-col">
-        
-        <main className="flex-grow">
-          {children}
-        </main>
-        
-        <Footer />
+    <html lang="en">
+      <body className="antialiased" suppressHydrationWarning>
+        {children}
       </body>
     </html>
   );
