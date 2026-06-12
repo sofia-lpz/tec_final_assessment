@@ -355,6 +355,10 @@ const connectSocket = () => {
 
 // Subscribe to messages pushed by the simulation server (status, metrics, ...).
 // Returns an unsubscribe function.
+/**
+ * @param {(payload: any) => void} listener - callback to receive messages
+ * @returns {() => void} unsubscribe function
+ */
 export const onSimulationMessage = (listener) => {
     messageListeners.add(listener);
     return () => messageListeners.delete(listener);
