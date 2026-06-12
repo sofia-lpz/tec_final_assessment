@@ -10,6 +10,8 @@ import {
   stopSimulation,
   onSimulationMessage,
   closeSimulationSocket,
+  ApiError,
+  handleUnauthorized,
 } from "@/utils/dataProvider";
 // ── Config ───────────────────────────────────────────────────
 const START_CONFIG: Record<string, unknown> = {
@@ -171,6 +173,11 @@ export default function Galaxy() {
         }
         case "error":
           setStatus(`Error: ${(msg as { message: string }).message}`);
+          // Check if error message indicates unauthorized
+          if ((msg as { message: string }).message?.includes("401") || 
+              (msg as { message: string }).message?.toLowerCase().includes("unauthorized")) {
+            handleUnauthorized();
+          }
           break;
         case "done":
           setStatus("Simulation complete.");
@@ -197,6 +204,11 @@ export default function Galaxy() {
       })
       .catch((err: unknown) => {
         if (cancelled) return;
+        // Check for unauthorized error and handle it
+        if (err instanceof ApiError && err.isUnauthorized) {
+          handleUnauthorized();
+          return;
+        }
         const message = err instanceof Error ? err.message : String(err);
         setStatus(`WebSocket error: ${message}`);
       });

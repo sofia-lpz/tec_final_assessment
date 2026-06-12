@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import dataProvider, { ApiError } from "@/utils/dataProvider";
+import dataProvider, { ApiError, handleUnauthorized } from "@/utils/dataProvider";
 
 type ConfigState = {
   ppo: { learningRate: number; gamma: number; critic: "IPPO" | "MAPPO" };
@@ -119,6 +119,11 @@ export default function SaveSimulationModal({ isOpen, onClose, config, current =
       onSaved?.(updated, { id: current.id, name: trimmed }, config, "update");
       onClose();
     } catch (err) {
+      // Check for unauthorized error and handle it
+      if (err instanceof ApiError && err.isUnauthorized) {
+        await handleUnauthorized();
+        return;
+      }
       setError(mapError(err));
     } finally {
       setSaving(false);
@@ -158,6 +163,11 @@ export default function SaveSimulationModal({ isOpen, onClose, config, current =
       onSaved?.(created, { id: newId, name: trimmed }, config, "create");
       onClose();
     } catch (err) {
+      // Check for unauthorized error and handle it
+      if (err instanceof ApiError && err.isUnauthorized) {
+        await handleUnauthorized();
+        return;
+      }
       setError(mapError(err));
     } finally {
       setSaving(false);
