@@ -12,6 +12,32 @@ export default function TheoryPage() {
       <main className="w-full">
         
 
+        <section className="relative min-h-screen flex items-center py-32 bg-[url('/assets/simulation-bg.jpg')] bg-cover bg-center bg-fixed">
+          <div className="absolute inset-0 bg-black/75"></div>
+          
+          <div className="relative z-10 max-w-5xl mx-auto px-6 lg:px-8 w-full">
+            <div className="p-8 md:p-12 bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl">
+              <h2 className="text-sm md:text-base tracking-[0.3em] text-gray-400 mb-4">00. OVERVIEW</h2>
+              <h1 className="text-3xl md:text-5xl font-light tracking-widest mb-8 border-b border-white/20 pb-6">
+                THE SIMULATION
+              </h1>
+              
+              <div className="space-y-6 text-sm md:text-base text-gray-300 font-light leading-relaxed tracking-wide">
+                <p>
+                  This is a multi-agent reinforcement learning simulation of the "dark forest" hypothesis from cosmic sociology, popularized by Liu Cixin's Three-Body trilogy. Several civilizations spawn on home planets scattered across a toroidal grid, each able to explore the space around them, broadcast their position to everyone, colonize empty planets, conquer inhabited ones, or destroy planets outright.
+                </p>
+                <p>
+                  Science accumulates from owned planets and exploration, expanding a civilization's reach, while resources harvested from planets fund expansion and warfare. Combat follows a strict first-strike rule, whoever attacks first wins, and a civilization dies the moment it loses its last planet, making revealing your location existentially dangerous. And yet, the simulation rewards broadcasting, this is the crucial point, the agents learn not to broadcast even given the incentive.
+                </p>
+                <p>
+                  Each agent is trained independently with PPO to maximize its own survival and growth, and the experiment watches for the dark-forest equilibrium to emerge on its own: training halts when agents learn to fall silent (broadcasting collapses) or when nearly every episode ends in mutual annihilation.
+                </p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+
         <section className="relative min-h-screen flex items-center py-32 bg-[url('/assets/fermi-bg.jpg')] bg-cover bg-center bg-fixed">
           {/* Overlay oscuro para legibilidad */}
           <div className="absolute inset-0 bg-black/70"></div>
