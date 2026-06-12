@@ -73,8 +73,6 @@ const COLORS = {
   axis: "rgba(255,255,255,0.35)",
 };
 
-const ENTROPY_COLLAPSE_THRESHOLD = 0.15;
-
 /* ============================================================
    LIVE FEED SUBSCRIPTION
    ============================================================ */
@@ -166,16 +164,6 @@ export default function GraficasContainer({
   const metrics = data ?? liveMetrics;
 
   const latest = last(metrics);
-  const entropyCollapsing =
-    (latest?.entropy ?? Infinity) < ENTROPY_COLLAPSE_THRESHOLD;
-
-  const sparklines = [
-    { key: "policyLoss", label: "POLICY LOSS", color: COLORS.policyLoss },
-    { key: "valueLoss", label: "VALUE LOSS", color: COLORS.valueLoss },
-    { key: "entropy", label: "ENTROPY", color: COLORS.entropy, entropy: true },
-    { key: "approxKL", label: "APPROX KL", color: COLORS.approxKL },
-  ] as const;
-
   return (
     <div className="w-full flex flex-col text-white bg-black/20 backdrop-blur-xl border border-white/90 p-4 sm:p-6 lg:p-8 rounded-xl shadow-2xl">
       <h2 className="text-lg sm:text-2xl lg:text-3xl font-light tracking-[0.1em] sm:tracking-[0.2em] mb-6 lg:mb-8 text-center border-b border-white/20 pb-3 lg:pb-4 leading-tight">
@@ -232,54 +220,6 @@ export default function GraficasContainer({
           </div>
         </Panel>
 
-        {/* 2 — Per-broadcaster: steps from own broadcast to own death */}
-        <Panel
-          title="BROADCAST → BROADCASTER DEATH"
-          accent={COLORS.annihilation}
-          right={
-            <span className="text-[10px] sm:text-xs tabular-nums text-gray-200">
-              {fmt(latest?.timeToAnnihilation, 1)} steps · ema{" "}
-              {fmt(latest?.ttaEma, 1)}
-            </span>
-          }
-        >
-          <div className="h-36 sm:h-40 lg:h-48">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={metrics} margin={{ top: 5, right: 5, left: -10, bottom: 0 }}>
-                <CartesianGrid stroke={COLORS.grid} vertical={false} />
-                <XAxis dataKey="iteration" {...axisProps} />
-                <YAxis {...axisProps} width={32} />
-                <Tooltip {...tooltipStyle} />
-                <Line
-                  type="monotone"
-                  dataKey="timeToAnnihilation"
-                  name="STEPS TO DEATH (PER BROADCASTER)"
-                  stroke={COLORS.annihilation}
-                  strokeWidth={1.5}
-                  strokeOpacity={0.55}
-                  dot={{ r: 1.5, fill: COLORS.annihilation, strokeWidth: 0 }}
-                  connectNulls={false}
-                />
-                <Line
-                  type="monotone"
-                  dataKey="ttaEma"
-                  name="EMA"
-                  stroke="#fca5a5"
-                  strokeWidth={2}
-                  strokeDasharray="6 3"
-                  dot={false}
-                  connectNulls
-                />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-          <p className="mt-2 text-[9px] sm:text-[10px] tracking-wider text-gray-500">
-            Steps from a civ's first broadcast to its own death (mean per
-            iteration). Gaps: no broadcaster died. A falling EMA means the
-            hunters are answering faster.
-          </p>
-        </Panel>
-
         {/* 3 — Average reward per episode */}
         <Panel
           title="AVERAGE REWARD / EPISODE"
@@ -318,57 +258,7 @@ export default function GraficasContainer({
           </div>
         </Panel>
 
-        {/* 4 — PPO diagnostics: 4 sparklines */}
-        <Panel
-          title="PPO DIAGNOSTICS"
-          accent={COLORS.entropy}
-          right={
-            entropyCollapsing ? (
-              <span className="text-[9px] sm:text-[10px] tracking-widest text-red-400">
-                ENTROPY COLLAPSE — DOCTRINE CONVERGING
-              </span>
-            ) : undefined
-          }
-        >
-          <div className="grid grid-cols-2 gap-x-4 gap-y-3 flex-1">
-            {sparklines.map((s) => (
-              <div key={s.key} className="flex flex-col">
-                <div className="flex items-baseline justify-between mb-1">
-                  <span
-                    className="text-[9px] sm:text-[10px] tracking-wider"
-                    style={{
-                      color:
-                        "entropy" in s && entropyCollapsing
-                          ? "#f87171"
-                          : "rgba(156,163,175,1)",
-                    }}
-                  >
-                    {s.label}
-                  </span>
-                  <span className="text-[10px] sm:text-xs tabular-nums text-gray-200">
-                    {fmt(latest?.[s.key], 3)}
-                  </span>
-                </div>
-                <div className="h-12 sm:h-14">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={metrics} margin={{ top: 2, right: 0, left: 0, bottom: 2 }}>
-                      <Tooltip {...tooltipStyle} />
-                      <Line
-                        type="monotone"
-                        dataKey={s.key}
-                        name={s.label}
-                        stroke={s.color}
-                        strokeWidth={1.5}
-                        dot={false}
-                        connectNulls
-                      />
-                    </LineChart>
-                  </ResponsiveContainer>
-                </div>
-              </div>
-            ))}
-          </div>
-        </Panel>
+
       </div>
     </div>
   );
