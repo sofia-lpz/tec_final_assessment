@@ -1,12 +1,13 @@
 "use client";
 
 import React from "react";
-import SolarSystem from "@/components/SolarSystem";
 import PPOControls from "@/components/PPOcontrols";
 import GraficasContainer from "@/components/Graphics";
 import Header from "@/components/Header";
+import Galaxy from "@/components/Galaxy";
 
-const SolarSystemMemo = React.memo(SolarSystem);
+// Optimizamos renderizado
+const SolarSystemMemo = React.memo(Galaxy);
 const GraphicsMemo = React.memo(GraficasContainer);
 
 export default function SimulationPage() {
@@ -22,7 +23,7 @@ export default function SimulationPage() {
              {/* CAMBIO CLAVE: lg:min-h-[65vh] fue reemplazado por lg:h-[70vh] */}
              <div className="flex flex-col lg:flex-row gap-4 sm:gap-6 w-full min-h-[50vh] lg:h-[70vh]">
                  
-                 {/* SolarSystem */}
+                 {/* Galaxy */}
                  <div className="flex-1 w-full rounded-xl overflow-hidden border border-white/20 bg-white/5 relative min-h-[40vh] lg:min-h-0">
                    <SolarSystemMemo />
                  </div>

@@ -63,6 +63,9 @@ class Civilization:
         deaths = self.population * self.death_rate
         self.population += births - deaths
 
+        # Passive research: population generates science every step
+        self.science += self.population * SCIENCE_PER_CAPITA
+
         needed = self.population * self.population_consumption
         self.resources -= needed
 
