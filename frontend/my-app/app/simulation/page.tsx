@@ -19,13 +19,17 @@ export default function SimulationPage() {
         <div className="flex flex-col gap-4 sm:gap-6 w-full">
              
              {/* FILA SUPERIOR: Simulación + Controles */}
-             <div className="flex flex-col lg:flex-row gap-4 sm:gap-6 w-full min-h-[50vh] lg:min-h-[65vh]">
+             {/* CAMBIO CLAVE: lg:min-h-[65vh] fue reemplazado por lg:h-[70vh] */}
+             <div className="flex flex-col lg:flex-row gap-4 sm:gap-6 w-full min-h-[50vh] lg:h-[70vh]">
                  
+                 {/* SolarSystem */}
                  <div className="flex-1 w-full rounded-xl overflow-hidden border border-white/20 bg-white/5 relative min-h-[40vh] lg:min-h-0">
                    <SolarSystemMemo />
                  </div>
 
-                 <div className="w-full lg:w-80 xl:w-96 shrink-0">
+                 {/* PPOControls */}
+                 {/* El h-full ahora obedecerá el límite estricto de 70vh del padre */}
+                 <div className="w-full lg:w-80 xl:w-96 shrink-0 h-full max-h-full">
                    <PPOControls />
                  </div>
              </div>
