@@ -6,6 +6,7 @@ import GraficasContainer from "@/components/Graphics";
 import Header from "@/components/Header";
 import Galaxy from "@/components/Galaxy";
 import Footer from "@/components/Footer";
+import PlanetStatesSection from "@/components/PlanetStatesSection";
 
 // Optimizamos renderizado
 const SolarSystemMemo = React.memo(Galaxy);
@@ -39,6 +40,10 @@ export default function SimulationPage() {
              {/* FILA INFERIOR: Gráficas de Métricas */}
              <div className="w-full">
                <GraphicsMemo />
+             </div>
+
+             <div className="w-full">
+               <PlanetStatesSection />
              </div>
              
         </div>
