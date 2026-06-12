@@ -474,9 +474,10 @@ const finiteOrNull = (v) =>
  * Server field          → chart field
  * broadcast_rate        → broadcastRate        (0..1, from the training batch)
  * mean_survivors        → avgSurvivors         (rolling mean, last 100 eps)
- * time_to_annihilation  → timeToAnnihilation   (replay episode: steps from the
- *                                               first broadcast to annihilation;
- *                                               null = no broadcast / survived /
+ * time_to_annihilation  → timeToAnnihilation   (replay episode: MEAN over civs
+ *                                               of steps from a civ's first
+ *                                               broadcast to ITS OWN death;
+ *                                               null = no broadcaster died /
  *                                               no replay streamed this iter)
  * mean_episode_return   → avgReward            (rolling mean, last 100 eps)
  * policy_loss           → policyLoss
@@ -501,6 +502,7 @@ export const toIterationMetrics = (msg) => {
         entropy: finiteOrNull(s.entropy),
         approxKL: finiteOrNull(s.approx_kl),
         // Extras (not charted yet, but cheap to carry):
+        nBroadcasterDeaths: finiteOrNull(s.n_broadcaster_deaths),
         globalStep: finiteOrNull(s.global_step ?? msg.global_step),
         learningRate: finiteOrNull(s.learning_rate),
         broadcastEma: finiteOrNull(s.broadcast_ema),
@@ -511,6 +513,22 @@ export const toIterationMetrics = (msg) => {
 // Keep memory bounded on very long runs; well above anything Recharts can
 // usefully draw anyway.
 const MAX_METRIC_POINTS = 5000;
+
+// EMA over timeToAnnihilation (alpha = weight of the newest sample). Computed
+// client-side because it depends on accumulation order and must reset with
+// each run. Carries the previous value forward through null gaps (iterations
+// with no broadcaster death) so the trend line stays continuous.
+const TTA_EMA_ALPHA = 0.2;
+
+const withTtaEma = (point, prevPoint) => {
+    const prevEma = prevPoint ? prevPoint.ttaEma : null;
+    const v = point.timeToAnnihilation;
+    let ttaEma;
+    if (v == null) ttaEma = prevEma; // gap → hold the trend
+    else if (prevEma == null) ttaEma = v; // first sample seeds the EMA
+    else ttaEma = TTA_EMA_ALPHA * v + (1 - TTA_EMA_ALPHA) * prevEma;
+    return { ...point, ttaEma };
+};
 
 /**
  * Create an accumulating metrics feed over the simulation socket.
@@ -557,9 +575,13 @@ export const createMetricsFeed = ({ maxPoints = MAX_METRIC_POINTS } = {}) => {
         const lastPoint = metrics[metrics.length - 1];
         if (lastPoint && lastPoint.iteration === point.iteration) {
             // Same iteration re-emitted — replace instead of duplicating.
-            metrics = [...metrics.slice(0, -1), point];
+            // EMA chains from the point BEFORE the one being replaced.
+            metrics = [
+                ...metrics.slice(0, -1),
+                withTtaEma(point, metrics[metrics.length - 2]),
+            ];
         } else {
-            metrics = [...metrics, point];
+            metrics = [...metrics, withTtaEma(point, lastPoint)];
         }
         if (metrics.length > maxPoints) metrics = metrics.slice(-maxPoints);
         notify();

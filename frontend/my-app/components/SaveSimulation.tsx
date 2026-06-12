@@ -17,6 +17,9 @@ type ConfigState = {
   };
 };
 
+/** Escenario actualmente cargado (lo entrega LoadSimulationModal vía onLoad). */
+export type LoadedScenarioMeta = { id: number; name: string };
+
 /**
  * Flatten the nested UI config into the exact shape the backend's
  * validateScenarioData requires (controller.js): flat snake_case keys.
@@ -53,33 +56,89 @@ type SaveModalProps = {
   isOpen: boolean;
   onClose: () => void;
   config: ConfigState;
+  /** Escenario cargado actualmente, o null si la config nunca se ha guardado.
+   *  Si existe, el modal muestra su nombre y ofrece SAVE (update) además de SAVE AS. */
+  current?: LoadedScenarioMeta | null;
   /** Called after the scenario was successfully persisted via the API.
-   *  Receives the server response (e.g. the created scenario / its id)
-   *  so the parent can refresh its saved-scenarios list. */
-  onSaved?: (created: unknown, name: string, config: ConfigState) => void;
+   *  `meta` identifica el escenario resultante (id + name) para que el padre
+   *  actualice su estado `current` y refresque su lista. */
+  onSaved?: (
+    serverResponse: unknown,
+    meta: LoadedScenarioMeta,
+    config: ConfigState,
+    mode: "update" | "create"
+  ) => void;
 };
 
-export default function SaveSimulationModal({ isOpen, onClose, config, onSaved }: SaveModalProps) {
+export default function SaveSimulationModal({ isOpen, onClose, config, current = null, onSaved }: SaveModalProps) {
   const [name, setName] = useState("");
-  const [saving, setSaving] = useState(false);
+  const [saving, setSaving] = useState<false | "update" | "create">(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (isOpen) {
-      setName("");
+      // Si hay un escenario cargado, precarga su nombre
+      setName(current?.name ?? "");
       setError(null);
       setSaving(false);
     }
-  }, [isOpen]);
+  }, [isOpen, current]);
 
-  const handleConfirmSave = async () => {
+  const mapError = (err: unknown) => {
+    if (err instanceof ApiError) {
+      if (err.code === "NOT_AUTHENTICATED" || err.isUnauthorized) {
+        return "YOUR SESSION HAS EXPIRED — PLEASE LOG IN AGAIN";
+      }
+      if (err.isTimeout) return "THE SERVER TOOK TOO LONG TO RESPOND. TRY AGAIN.";
+      if (err.isNetworkError) return "NETWORK ERROR — CHECK YOUR CONNECTION";
+      return err.message.toUpperCase();
+    }
+    return "UNEXPECTED ERROR WHILE SAVING";
+  };
+
+  /** SAVE — sobrescribe el escenario cargado (PUT /scenarios/:id). */
+  const handleUpdate = async () => {
+    if (!current) return;
     const trimmed = name.trim();
     if (!trimmed) {
       setError("PLEASE ENTER A SIMULATION NAME");
       return;
     }
 
-    setSaving(true);
+    setSaving("update");
+    setError(null);
+
+    try {
+      // Si tu controlador PUT espera { scenario: ... } como el POST,
+      // envuelve el payload: { scenario: toScenarioPayload(...) }
+      const updated = await dataProvider.updateScenario(
+        current.id,
+        toScenarioPayload(trimmed, config)
+      );
+
+      onSaved?.(updated, { id: current.id, name: trimmed }, config, "update");
+      onClose();
+    } catch (err) {
+      setError(mapError(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  /** SAVE AS — crea un escenario nuevo (POST /scenarios). */
+  const handleSaveAs = async () => {
+    const trimmed = name.trim();
+    if (!trimmed) {
+      setError("PLEASE ENTER A SIMULATION NAME");
+      return;
+    }
+    // Evita un duplicado accidental con el mismo nombre del escenario abierto
+    if (current && trimmed === current.name.trim()) {
+      setError('CHANGE THE NAME TO "SAVE AS NEW", OR USE "SAVE" TO OVERWRITE');
+      return;
+    }
+
+    setSaving("create");
     setError(null);
 
     try {
@@ -89,28 +148,32 @@ export default function SaveSimulationModal({ isOpen, onClose, config, onSaved }
         toScenarioPayload(trimmed, config)
       );
 
-      onSaved?.(created, trimmed, config);
+      // Intenta recuperar el id del escenario recién creado del response
+      const newId =
+        (created as any)?.id ??
+        (created as any)?.scenario?.id ??
+        (created as any)?.insertId ??
+        -1;
+
+      onSaved?.(created, { id: newId, name: trimmed }, config, "create");
       onClose();
     } catch (err) {
-      if (err instanceof ApiError) {
-        if (err.code === "NOT_AUTHENTICATED" || err.isUnauthorized) {
-          setError("YOUR SESSION HAS EXPIRED — PLEASE LOG IN AGAIN");
-        } else if (err.isTimeout) {
-          setError("THE SERVER TOOK TOO LONG TO RESPOND. TRY AGAIN.");
-        } else if (err.isNetworkError) {
-          setError("NETWORK ERROR — CHECK YOUR CONNECTION");
-        } else {
-          setError(err.message.toUpperCase());
-        }
-      } else {
-        setError("UNEXPECTED ERROR WHILE SAVING");
-      }
+      setError(mapError(err));
     } finally {
       setSaving(false);
     }
   };
 
   if (!isOpen) return null;
+
+  const busy = saving !== false;
+
+  const Spinner = () => (
+    <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+    </svg>
+  );
 
   // Bloque de información rediseñado para mayor legibilidad
   const InfoBlock = ({ title, data }: { title: string, data: Record<string, string | number> }) => (
@@ -139,15 +202,22 @@ export default function SaveSimulationModal({ isOpen, onClose, config, onSaved }
       {/* Contenedor más amplio (max-w-4xl) y con bordes más redondeados (rounded-2xl) */}
       <div className="w-full max-w-4xl bg-black/50 border border-white/20 rounded-2xl shadow-2xl flex flex-col max-h-[90vh] overflow-hidden">
 
-        {/* Header */}
+        {/* Header — muestra el nombre del escenario cargado, si lo hay */}
         <div className="px-6 md:px-8 py-5 border-b border-white/10 flex justify-between items-center bg-white/5 shrink-0">
-          <h3 className="text-white text-base md:text-lg tracking-[0.2em] font-light">
-            SAVE SIMULATION
-          </h3>
+          <div className="min-w-0">
+            <h3 className="text-white text-base md:text-lg tracking-[0.2em] font-light truncate">
+              {current ? `SAVE — ${current.name.toUpperCase()}` : "SAVE SIMULATION"}
+            </h3>
+            {current && (
+              <p className="text-white/40 text-[11px] md:text-xs tracking-widest mt-1">
+                EDITING SAVED SIMULATION · ID: {current.id}
+              </p>
+            )}
+          </div>
           <button
             onClick={onClose}
-            disabled={saving}
-            className="text-white/50 hover:text-white transition-colors p-2 rounded-full hover:bg-white/10 disabled:opacity-30 disabled:pointer-events-none"
+            disabled={busy}
+            className="text-white/50 hover:text-white transition-colors p-2 rounded-full hover:bg-white/10 disabled:opacity-30 disabled:pointer-events-none shrink-0"
           >
             <svg className="w-5 h-5 md:w-6 md:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M6 18L18 6M6 6l12 12" />
@@ -167,12 +237,22 @@ export default function SaveSimulationModal({ isOpen, onClose, config, onSaved }
               type="text"
               value={name}
               onChange={(e) => { setName(e.target.value); if (error) setError(null); }}
-              onKeyDown={(e) => { if (e.key === "Enter" && !saving) handleConfirmSave(); }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !busy) {
+                  // Enter = acción primaria: SAVE si hay escenario cargado, si no SAVE AS
+                  current ? handleUpdate() : handleSaveAs();
+                }
+              }}
               placeholder="e.g. Standard Exploration V1"
-              disabled={saving}
+              disabled={busy}
               className="w-full bg-black/50 border border-white/20 p-4 text-base md:text-lg text-white focus:outline-none focus:border-white transition-colors rounded-lg placeholder:text-white/20 tracking-wide disabled:opacity-50"
               autoFocus
             />
+            {current && (
+              <p className="text-white/30 text-[11px] md:text-xs tracking-widest">
+                "SAVE" OVERWRITES "{current.name.toUpperCase()}" — "SAVE AS NEW" CREATES A COPY WITH THIS NAME
+              </p>
+            )}
             {error && (
               <p className="text-red-400 text-xs md:text-sm tracking-widest border border-red-400/30 bg-red-400/10 rounded-lg px-4 py-3">
                 {error}
@@ -197,33 +277,59 @@ export default function SaveSimulationModal({ isOpen, onClose, config, onSaved }
         <div className="px-6 md:px-8 py-5 border-t border-white/10 bg-white/5 flex flex-col-reverse sm:flex-row gap-4 shrink-0 justify-end">
           <button
             onClick={onClose}
-            disabled={saving}
+            disabled={busy}
             className="px-8 py-3 border border-white/20 text-white/70 hover:text-white hover:border-white text-xs md:text-sm tracking-widest transition-all rounded-sm disabled:opacity-30 disabled:pointer-events-none"
           >
             CANCEL
           </button>
+
+          {/* SAVE AS NEW — siempre disponible (única acción si no hay escenario cargado) */}
           <button
-            onClick={handleConfirmSave}
-            disabled={saving}
-            className="px-8 py-3 bg-white text-black text-xs md:text-sm tracking-widest font-bold flex items-center justify-center gap-2 hover:bg-gray-200 transition-colors rounded-sm disabled:opacity-60 disabled:cursor-not-allowed"
+            onClick={handleSaveAs}
+            disabled={busy}
+            className={
+              current
+                ? "px-8 py-3 border border-white/40 text-white/80 hover:text-white hover:border-white text-xs md:text-sm tracking-widest font-bold flex items-center justify-center gap-2 transition-all rounded-sm disabled:opacity-60 disabled:cursor-not-allowed"
+                : "px-8 py-3 bg-white text-black text-xs md:text-sm tracking-widest font-bold flex items-center justify-center gap-2 hover:bg-gray-200 transition-colors rounded-sm disabled:opacity-60 disabled:cursor-not-allowed"
+            }
           >
-            {saving ? (
+            {saving === "create" ? (
               <>
-                <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
-                </svg>
+                <Spinner />
                 SAVING...
               </>
             ) : (
               <>
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
                 </svg>
-                CONFIRM SAVE
+                {current ? "SAVE AS NEW" : "CONFIRM SAVE"}
               </>
             )}
           </button>
+
+          {/* SAVE (overwrite) — solo cuando hay un escenario cargado */}
+          {current && (
+            <button
+              onClick={handleUpdate}
+              disabled={busy}
+              className="px-8 py-3 bg-white text-black text-xs md:text-sm tracking-widest font-bold flex items-center justify-center gap-2 hover:bg-gray-200 transition-colors rounded-sm disabled:opacity-60 disabled:cursor-not-allowed"
+            >
+              {saving === "update" ? (
+                <>
+                  <Spinner />
+                  SAVING...
+                </>
+              ) : (
+                <>
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
+                  </svg>
+                  SAVE
+                </>
+              )}
+            </button>
+          )}
         </div>
 
       </div>

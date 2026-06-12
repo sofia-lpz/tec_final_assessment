@@ -1,13 +1,17 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { getScenariosByUser, scenarioToConfig, ApiError } from "../utils/dataProvider"; // adjust path to where dataProvider.js lives
+import { getScenariosByUser, deleteScenario, scenarioToConfig, ApiError } from "../utils/dataProvider"; // adjust path to where dataProvider.js lives
+
+// Metadatos del escenario cargado — el padre los guarda para "Save" vs "Save As"
+export type LoadedScenarioMeta = { id: number; name: string };
 
 // Tipos requeridos
 type LoadModalProps = {
   isOpen: boolean;
   onClose: () => void;
-  onLoad: (config: any) => void;
+  /** Ahora también entrega { id, name } para que el padre sepa QUÉ simulación está abierta */
+  onLoad: (config: any, meta: LoadedScenarioMeta) => void;
 };
 
 // Fila plana tal como llega de la tabla `scenarios`
@@ -26,6 +30,11 @@ export default function LoadSimulationModal({ isOpen, onClose, onLoad }: LoadMod
   const [page, setPage] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Borrado: confirmación inline en dos pasos + estado de petición
+  const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
+  const [deletingId, setDeletingId] = useState<number | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
@@ -55,7 +64,11 @@ export default function LoadSimulationModal({ isOpen, onClose, onLoad }: LoadMod
 
   // Resetea a la primera página cada vez que se abre el modal
   useEffect(() => {
-    if (isOpen) setPage(0);
+    if (isOpen) {
+      setPage(0);
+      setConfirmDeleteId(null);
+      setDeleteError(null);
+    }
   }, [isOpen]);
 
   useEffect(() => {
@@ -78,6 +91,25 @@ export default function LoadSimulationModal({ isOpen, onClose, onLoad }: LoadMod
 
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
+  };
+
+  const handleDelete = async (sim: ScenarioRow) => {
+    setDeletingId(sim.id);
+    setDeleteError(null);
+    try {
+      await deleteScenario(sim.id);
+      setConfirmDeleteId(null);
+      // Refresca la página actual; fetchPage retrocede si quedó vacía
+      await fetchPage(page);
+    } catch (err) {
+      setDeleteError(
+        err instanceof ApiError
+          ? `COULD NOT DELETE "${sim.name.toUpperCase()}": ${err.message.toUpperCase()}`
+          : "UNEXPECTED ERROR WHILE DELETING"
+      );
+    } finally {
+      setDeletingId(null);
+    }
   };
 
   if (!isOpen) return null;
@@ -105,6 +137,11 @@ export default function LoadSimulationModal({ isOpen, onClose, onLoad }: LoadMod
 
         {/* Cuerpo del Modal (Lista con Scroll) */}
         <div className="p-6 md:p-8 flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-white/20">
+          {deleteError && (
+            <p className="mb-5 text-red-400 text-xs md:text-sm tracking-widest border border-red-400/30 bg-red-400/10 rounded-lg px-4 py-3">
+              {deleteError}
+            </p>
+          )}
           {isLoading ? (
             <div className="text-center text-white/50 text-sm md:text-base tracking-widest py-16 animate-pulse">
               FETCHING RECORDS...
@@ -144,28 +181,72 @@ export default function LoadSimulationModal({ isOpen, onClose, onLoad }: LoadMod
 
                   {/* Botones siempre visibles y escalados tipográficamente */}
                   <div className="flex gap-3">
-                    <button
-                      onClick={() => handleDownload(sim)}
-                      className="flex-1 sm:flex-none justify-center px-4 md:px-5 py-2.5 border border-white/20 text-white/70 hover:text-white hover:border-white text-xs md:text-sm tracking-widest flex items-center gap-2 transition-all rounded-sm"
-                      title="Download JSON"
-                    >
-                      <svg className="w-3.5 h-3.5 md:w-4 md:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                      </svg>
-                      EXPORT
-                    </button>
-                    <button
-                      onClick={() => {
-                        onLoad(scenarioToConfig(sim));
-                        onClose();
-                      }}
-                      className="flex-1 sm:flex-none justify-center px-6 md:px-8 py-2.5 bg-white text-black text-xs md:text-sm tracking-widest font-bold flex items-center gap-2 hover:bg-gray-200 transition-colors rounded-sm"
-                    >
-                      <svg className="w-3.5 h-3.5 md:w-4 md:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
-                      </svg>
-                      LOAD
-                    </button>
+                    {confirmDeleteId === sim.id ? (
+                      <>
+                        {/* Confirmación de borrado en dos pasos */}
+                        <button
+                          onClick={() => handleDelete(sim)}
+                          disabled={deletingId === sim.id}
+                          className="flex-1 sm:flex-none justify-center px-4 md:px-5 py-2.5 bg-red-500/90 text-white text-xs md:text-sm tracking-widest font-bold flex items-center gap-2 hover:bg-red-500 transition-colors rounded-sm disabled:opacity-60 disabled:cursor-not-allowed"
+                        >
+                          {deletingId === sim.id ? (
+                            <>
+                              <svg className="w-3.5 h-3.5 md:w-4 md:h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+                              </svg>
+                              DELETING...
+                            </>
+                          ) : (
+                            "CONFIRM DELETE"
+                          )}
+                        </button>
+                        <button
+                          onClick={() => setConfirmDeleteId(null)}
+                          disabled={deletingId === sim.id}
+                          className="flex-1 sm:flex-none justify-center px-4 md:px-5 py-2.5 border border-white/20 text-white/70 hover:text-white hover:border-white text-xs md:text-sm tracking-widest flex items-center transition-all rounded-sm disabled:opacity-30"
+                        >
+                          CANCEL
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <button
+                          onClick={() => { setConfirmDeleteId(sim.id); setDeleteError(null); }}
+                          className="flex-1 sm:flex-none justify-center px-4 md:px-5 py-2.5 border border-red-400/30 text-red-400/80 hover:text-red-400 hover:border-red-400 text-xs md:text-sm tracking-widest flex items-center gap-2 transition-all rounded-sm"
+                          title="Delete simulation"
+                        >
+                          <svg className="w-3.5 h-3.5 md:w-4 md:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                          </svg>
+                          DELETE
+                        </button>
+                        <button
+                          onClick={() => handleDownload(sim)}
+                          className="flex-1 sm:flex-none justify-center px-4 md:px-5 py-2.5 border border-white/20 text-white/70 hover:text-white hover:border-white text-xs md:text-sm tracking-widest flex items-center gap-2 transition-all rounded-sm"
+                          title="Download JSON"
+                        >
+                          <svg className="w-3.5 h-3.5 md:w-4 md:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                          </svg>
+                          EXPORT
+                        </button>
+                        <button
+                          onClick={() => {
+                            // Entrega config + metadatos para que el padre muestre el nombre
+                            // y habilite "SAVE" (update) sobre este escenario
+                            onLoad(scenarioToConfig(sim), { id: sim.id, name: sim.name });
+                            onClose();
+                          }}
+                          className="flex-1 sm:flex-none justify-center px-6 md:px-8 py-2.5 bg-white text-black text-xs md:text-sm tracking-widest font-bold flex items-center gap-2 hover:bg-gray-200 transition-colors rounded-sm"
+                        >
+                          <svg className="w-3.5 h-3.5 md:w-4 md:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                          </svg>
+                          LOAD
+                        </button>
+                      </>
+                    )}
                   </div>
                 </div>
               ))}
