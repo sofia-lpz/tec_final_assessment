@@ -16,7 +16,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Mi Proyecto 3D",
+  title: "Dark Forest",
   description: "Simulación realizada por el equipo",
   manifest: "/manifest.json",
 };
