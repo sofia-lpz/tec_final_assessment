@@ -14,13 +14,11 @@ export default function LoginPage() {
   const [info, setInfo] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  const setAuthCookies = (token: string, role?: string) => {
-    const secure = window.location.protocol === "https:" ? "; Secure" : "";
-    document.cookie = `authToken=${token}; path=/; max-age=3600; SameSite=Lax${secure}`;
-    if (role) {
-      document.cookie = `authRole=${role}; path=/; max-age=3600; SameSite=Lax${secure}`;
-    }
-  };
+  // ─── REMOVED: setAuthCookies ───────────────────────────────────────────────
+  // dataProvider.login() already calls setAuth() → localStorage.
+  // Writing a parallel copy to cookies caused a split-brain: the API layer
+  // (which reads from localStorage) always saw the user as logged-out.
+  // ──────────────────────────────────────────────────────────────────────────
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -35,21 +33,20 @@ export default function LoginPage() {
     setLoading(true);
     try {
       if (mode === "login") {
+        // api.login() calls setAuth(token, role) → localStorage internally.
         const data = await api.login(user, password);
         if (data?.token) {
-          setAuthCookies(data.token, data.role);
           window.location.href = "/simulation";
         } else {
           setError("Unexpected response from server");
         }
       } else {
         const data = await api.register(user, password);
-        // If the server returns a token on register, log the user in directly.
         if (data?.token) {
-          setAuthCookies(data.token, data.role);
+          // Server returned a token on register — store it and go straight in.
+          api.setAuth(data.token, data.role);
           window.location.href = "/simulation";
         } else {
-          // Otherwise, switch to login mode and let them sign in.
           setMode("login");
           setPassword("");
           setConfirmPassword("");
