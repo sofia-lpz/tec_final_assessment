@@ -1,8 +1,12 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import api from "../utils/dataProvider.js";
 
 type Mode = "login" | "register";
+
+const hasAuthToken = () =>
+  typeof document !== "undefined" &&
+  document.cookie.split("; ").some((c) => c.startsWith("authToken="));
 
 export default function LoginPage() {
   const [mode, setMode] = useState<Mode>("login");
@@ -13,6 +17,40 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
+  const clearCredentials = () => {
+    setUser("");
+    setPassword("");
+    setConfirmPassword("");
+    setShowPassword(false);
+    setError(null);
+    setInfo(null);
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    // If the user is already authenticated (e.g. pressed Back after logging in),
+    // don't show the login form at all — send them forward again.
+    if (hasAuthToken()) {
+      window.location.replace("/simulation");
+      return;
+    }
+
+    // When the browser restores this page from the back/forward cache (bfcache),
+    // React state is restored too — including typed credentials. Wipe them.
+    const onPageShow = (e: PageTransitionEvent) => {
+      if (e.persisted) {
+        if (hasAuthToken()) {
+          window.location.replace("/simulation");
+        } else {
+          clearCredentials();
+        }
+      }
+    };
+
+    window.addEventListener("pageshow", onPageShow);
+    return () => window.removeEventListener("pageshow", onPageShow);
+  }, []);
 
   const setAuthCookies = (token: string, role?: string) => {
     const secure = window.location.protocol === "https:" ? "; Secure" : "";
@@ -38,7 +76,10 @@ export default function LoginPage() {
         const data = await api.login(user, password);
         if (data?.token) {
           setAuthCookies(data.token, data.role);
-          window.location.href = "/simulation";
+          // Clear credentials from state BEFORE navigating, so the bfcache
+          // snapshot of this page never contains them.
+          clearCredentials();
+          window.location.replace("/simulation");
         } else {
           setError("Unexpected response from server");
         }
@@ -47,7 +88,8 @@ export default function LoginPage() {
         // If the server returns a token on register, log the user in directly.
         if (data?.token) {
           setAuthCookies(data.token, data.role);
-          window.location.href = "/simulation";
+          clearCredentials();
+          window.location.replace("/simulation");
         } else {
           // Otherwise, switch to login mode and let them sign in.
           setMode("login");
@@ -127,6 +169,7 @@ export default function LoginPage() {
               value={user}
               onChange={(e) => setUser(e.target.value)}
               disabled={loading}
+              autoComplete="username"
               className="w-full bg-white/5 border border-white/10 p-3 text-white focus:outline-none focus:border-white transition-all disabled:opacity-50"
               required
             />
@@ -140,6 +183,7 @@ export default function LoginPage() {
                 onChange={(e) => setPassword(e.target.value)}
                 disabled={loading}
                 minLength={mode === "register" ? 8 : undefined}
+                autoComplete={mode === "register" ? "new-password" : "current-password"}
                 className="w-full bg-white/5 border border-white/10 p-3 pr-16 text-white focus:outline-none focus:border-white transition-all disabled:opacity-50"
                 required
               />
@@ -167,6 +211,7 @@ export default function LoginPage() {
                   onChange={(e) => setConfirmPassword(e.target.value)}
                   disabled={loading}
                   minLength={8}
+                  autoComplete="new-password"
                   className="w-full bg-white/5 border border-white/10 p-3 pr-16 text-white focus:outline-none focus:border-white transition-all disabled:opacity-50"
                   required
                 />
